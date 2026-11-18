@@ -8,6 +8,7 @@ public static class AiFeatures
 {
     public const string Chat = "chat";
     public const string WeeklySummary = "weekly_summary";
+    public const string FoodRecognition = "food_recognition";
 }
 
 // Scoped (one per HTTP request). UsageTrackingChatModel adds token usage after

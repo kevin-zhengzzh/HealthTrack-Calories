@@ -26,6 +26,10 @@ services:
       Jwt__Issuer: healthtracker-api
       Jwt__Audience: healthtracker-app
       Jwt__ExpiryHours: "24"
+      # Optional — without it the app runs normally and AI features report "unavailable"
+      DeepSeek__ApiKey: ${DEEPSEEK_API_KEY:-}
+      # Optional: food recognition for camera + scale devices (Food Log page)
+      Anthropic__ApiKey: ${ANTHROPIC_API_KEY:-}
       ASPNETCORE_ENVIRONMENT: Production
     ports:
       - "5000:5000"
