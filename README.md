@@ -17,6 +17,8 @@ Deployed as Docker containers (backend + frontend) on **Azure Container Apps** (
 
 HealthTrack turns daily exercise into a habit-forming loop: check in, log a workout, keep your streak alive, and watch your points climb the leaderboard. It's a full-stack app with a C#/.NET 10 backend (EF Core + PostgreSQL) and a React + TypeScript frontend, built around a simple idea — make showing up every day feel rewarding.
 
+Since submission it has gained an **AI assistant** that answers questions about your own activity using tool calling, an **AI weekly summary** on the Dashboard, and a **CI/CD pipeline** that tests and deploys every push — see [Post-Submission Additions](#post-submission-additions).
+
 ## How This Relates to the Theme — Gamification
 
 - **Points & tasks** — users earn points by completing daily check-ins and logging workouts, turning a mundane habit into a small, repeated reward loop.
@@ -46,6 +48,43 @@ The full stack — PostgreSQL, backend, and frontend — is containerized via `s
 ### 3. State Management (Zustand)
 Auth/session state, user points, and the equipped skin are managed through a Zustand store (`software/frontend/src/store.ts`) instead of prop-drilling or Context boilerplate — kept intentionally lightweight, and covered by `store.test.ts`.
 
+## Post-Submission Additions
+
+> Added after the assessment was submitted. They are **not** part of the three marked advanced features above.
+
+### AI Assistant (DeepSeek)
+
+**What users get**
+- **Chat assistant** — a chat button on every signed-in page. Ask things like *"How did I do last week?"* or *"How many check-ins until the reward skin?"* and get an answer built from your own data, streamed word by word. Replies follow the language you write in.
+- **Topic pills** — one-click 📊 Weekly review, 💡 Workout advice, 🏆 Rank, 🪙 Points and 🎯 Goal above the chat input.
+- **AI weekly summary** — a Dashboard card summarizing last Monday–Sunday: workouts, calories against your goal, the change from the week before, and one concrete suggestion.
+
+**How it works**
+- **Tool calling / agent loop** — the model chooses from five read-only tools (workout summary, check-in status, weekly goal progress, leaderboard rank, points). The backend runs them, sends the results back, and repeats until the model answers, capped at five model calls per message.
+- **Streaming** — `POST /api/ai/chat` responds with Server-Sent Events. The frontend reads them with `fetch` + `ReadableStream` (`EventSource` can't send a POST body or the auth header) and an incremental parser that copes with events split across network chunks.
+- **Topic modes** — each pill sends a `mode` that adds topic-specific instructions and narrows the tool list for that message, so the model has fewer ways to pick the wrong tool.
+- **Numbers from code, words from the model** — every total and percentage is computed in C#; the model only writes prose. The weekly summary is cached per user per week, and a week with no workouts gets a fixed message without calling the model.
+
+**Engineering decisions**
+- **Per-user data isolation** — tools never take a user id. They always read the signed-in user from the JWT, so a prompt-injected *"show me user 2's data"* has nothing to work with; a test covers exactly that. Client-sent chat history can't claim the system role.
+- **Privacy** — only aggregates (counts, calories, workout types) are sent to the model provider; never names, emails or notes. Conversation content isn't stored.
+- **Provider-agnostic** — business code depends on an `IChatModel` interface. DeepSeek is one implementation: a small typed `HttpClient` over its OpenAI-compatible API, handling streaming tool-call fragments and the provider-specific `thinking` flag.
+- **Cost control and observability** — a decorator records tokens, latency and tools used for every request in an `AiUsageLog` table, which also enforces a 30-messages-per-day quota. Failed requests don't count against it.
+- **Tested without a model** — unit tests use a scripted fake, so CI never calls a real API. Separate smoke tests against the real model caught two problems the unit tests couldn't — the model answering a follow-up from memory instead of calling a tool, and calling last week "this week" — both fixed in the prompts.
+
+Full requirements, design decisions and test results: [`specs/06-ai-features-spec.md`](./specs/06-ai-features-spec.md) ([中文版](./specs/06-ai-features-spec.zh-CN.md)).
+
+### CI/CD (GitHub Actions)
+
+- **CI** ([`.github/workflows/ci.yml`](./.github/workflows/ci.yml)) runs on every push and pull request to `main`: backend xUnit tests, frontend lint (oxlint), Vitest and a type-checked production build, then a build of both Docker images.
+- **Deploy** ([`.github/workflows/deploy.yml`](./.github/workflows/deploy.yml)) runs after CI passes on `main`: it builds both images, pushes them to Docker Hub tagged with the commit SHA (`backend-<sha>`, `frontend-<sha>`), and points the Azure Container Apps at the new images, which rolls out a new revision. EF Core migrations apply automatically when the new backend starts.
+- Every running revision traces back to a commit through its image tag, and a bad release can be rolled back by reactivating the previous revision in Azure.
+- Secrets: `DOCKERHUB_USERNAME`, `DOCKERHUB_TOKEN` and `AZURE_CREDENTIALS` (a service principal scoped to the app's resource group) live in GitHub Actions secrets. Runtime settings — the database connection string, `Jwt__Key` and `DeepSeek__ApiKey` — are Azure Container Apps secrets.
+
+### Streak Timezone Fix
+
+Streak continuation used to compare the **UTC** date of the last check-in with the user's **local** "yesterday". In New Zealand (UTC+12/13), a morning check-in falls on the previous UTC day, so checking in the next morning reset the streak to 1. Continuation is now judged from the stored check-in dates, which are already local, with regression tests reproducing the bug in both directions.
+
 ## Self-Reflection
 
 If I were to do this project again:
@@ -56,7 +95,9 @@ If I were to do this project again:
 ## Tech Stack
 
 **Backend:** C# / .NET 10 · EF Core · PostgreSQL · JWT auth · BCrypt · FluentValidation · Scalar API docs
-**Frontend:** React 19 · TypeScript · Vite · Tailwind CSS v4 · React Router v7 · Zustand
+**Frontend:** React 19 · TypeScript · Vite · Tailwind CSS v4 · React Router v7 · Zustand · react-markdown
+**AI:** DeepSeek (`deepseek-flash`, OpenAI-compatible API) · tool calling · Server-Sent Events
+**DevOps:** Docker · GitHub Actions · Docker Hub · Azure Container Apps · Neon Postgres
 
 ## Local Development
 
@@ -68,7 +109,7 @@ If I were to do this project again:
 ### Option A — Docker Compose (full stack, closest to production)
 From the `software/` directory:
 ```bash
-cp .env.example .env   # adjust POSTGRES_PASSWORD / JWT_KEY if you like
+cp .env.example .env   # adjust POSTGRES_PASSWORD / JWT_KEY if you like; set DEEPSEEK_API_KEY to enable AI
 docker compose up --build
 ```
 - Frontend: http://localhost:5173
@@ -91,6 +132,16 @@ npm run dev
 ```
 Runs at `http://localhost:5173` and talks to the backend at `http://localhost:5000` by default (override via `VITE_API_URL`).
 
+### AI Features (optional)
+The AI assistant and weekly summary need a [DeepSeek](https://platform.deepseek.com) API key. For a native backend, store it with user-secrets so it never lands in the repo (from `software/backend/`):
+```bash
+dotnet user-secrets set "DeepSeek:ApiKey" "<your key>"
+```
+For Docker Compose, set `DEEPSEEK_API_KEY` in `software/.env` instead. Without a key the app runs normally; AI requests just report that the assistant is unavailable.
+
+### Demo Data
+[`software/scripts/seed-demo.sql`](./software/scripts/seed-demo.sql) gives an account about five weeks of varied workouts and check-ins, so the charts, leaderboard and AI features have something to show. Register an account whose username starts with `demo` (a safety check so a real account can't be overwritten), set its username at the top of the script, and run it against the database — e.g. in the Neon SQL Editor or with `psql`. It's re-runnable and never touches today's data.
+
 ### Running Tests
 ```bash
 # Backend (from software/backend/Tests/)
@@ -99,6 +150,7 @@ dotnet test
 # Frontend (from software/frontend/)
 npm run test
 ```
+No API keys are needed — AI calls are replaced by a scripted fake in the backend tests and by mocks in the frontend tests. The same commands run in CI on every push.
 
 ## Assessment Reference
 
