@@ -5,6 +5,7 @@ const links = [
   { to: '/', label: 'Dashboard', end: true },
   { to: '/history', label: 'Check-in History', end: false },
   { to: '/record-history', label: 'Record History', end: false },
+  { to: '/food-log', label: 'Food Log', end: false },
 ]
 
 export default function Sidebar() {

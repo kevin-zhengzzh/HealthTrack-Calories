@@ -147,6 +147,37 @@ export type ChatStreamEvent =
   | { type: 'done'; remaining: number }
   | { type: 'error'; message: string }
 
+// Food intake logged by a camera + scale device (e.g. Stack-chan)
+export interface IntakeRecord {
+  id: number
+  foodName: string
+  weightGrams: number
+  caloriesPer100g: number
+  calories: number
+  confidence: 'high' | 'medium' | 'low' | string
+  corrected: boolean
+  hasImage: boolean
+  date: string // yyyy-MM-dd, the user's local day
+  createdAt: string
+}
+
+export interface Device {
+  id: number
+  name: string
+  keyPrefix: string
+  createdAt: string
+  lastSeenAt: string | null
+}
+
+// Returned once at pairing time; the server only keeps the key's hash
+export interface CreatedDevice {
+  id: number
+  name: string
+  keyPrefix: string
+  key: string
+  createdAt: string
+}
+
 // Maps theme name → preview hex color
 export const THEME_COLORS: Record<string, { primary: string; light: string }> = {
   default:  { primary: '#16a34a', light: '#dcfce7' },

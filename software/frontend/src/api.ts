@@ -1,4 +1,4 @@
-import type { AuthResponse, CaloriesLeaderboardEntry, ChatQuota, ChatStreamEvent, ChatTurn, CheckIn, CheckinTodayLeaderboardEntry, CheckInResult, LeaderboardEntry, PointTransaction, RewardStatus, Skin, StreakLeaderboardEntry, User, WeeklySummary, WorkoutRecord, WorkoutSubmitResult } from './types'
+import type { AuthResponse, CaloriesLeaderboardEntry, ChatQuota, ChatStreamEvent, ChatTurn, CheckIn, CheckinTodayLeaderboardEntry, CheckInResult, CreatedDevice, Device, IntakeRecord, LeaderboardEntry, PointTransaction, RewardStatus, Skin, StreakLeaderboardEntry, User, WeeklySummary, WorkoutRecord, WorkoutSubmitResult } from './types'
 import { useStore } from './store'
 import { createSseParser } from './sse'
 
@@ -235,3 +235,36 @@ export async function streamChat(
     parse(decoder.decode(value, { stream: true }))
   }
 }
+
+// Food intake (logged by devices; users can review, correct and delete)
+export const getIntakeHistory = () => request<IntakeRecord[]>('/intake')
+
+export const updateIntake = (id: number, foodName: string, weightGrams: number, caloriesPer100g: number) =>
+  request<IntakeRecord>(`/intake/${id}`, {
+    method: 'PUT',
+    body: JSON.stringify({ foodName, weightGrams, caloriesPer100g }),
+  })
+
+export const deleteIntake = (id: number) =>
+  request<void>(`/intake/${id}`, { method: 'DELETE' })
+
+// Meal photos need the auth header, which an <img src> can't send — fetch
+// the bytes and hand back an object URL (caller revokes it).
+export async function fetchIntakeImageUrl(id: number, signal?: AbortSignal) {
+  const token = localStorage.getItem('token')
+  const res = await fetch(`${BASE}/intake/${id}/image`, {
+    headers: token ? { Authorization: `Bearer ${token}` } : {},
+    signal,
+  })
+  if (!res.ok) throw new Error(res.statusText)
+  return URL.createObjectURL(await res.blob())
+}
+
+// Devices (camera + scale) that upload meals with an API key
+export const getDevices = () => request<Device[]>('/device')
+
+export const createDevice = (name: string) =>
+  request<CreatedDevice>('/device', { method: 'POST', body: JSON.stringify({ name }) })
+
+export const revokeDevice = (id: number) =>
+  request<void>(`/device/${id}`, { method: 'DELETE' })
