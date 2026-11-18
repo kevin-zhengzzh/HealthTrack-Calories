@@ -7,9 +7,10 @@ using Microsoft.Extensions.Options;
 namespace backend.Services.Food;
 
 // Identifies the food in a device photo and estimates its calorie density
-// with Claude's vision. Uses the beta endpoint only for server-side refusal
-// fallbacks: if a safety classifier declines, the API re-serves the request
-// on a fallback model inside the same call.
+// with Claude's vision. Defaults to Claude Haiku 5.5, the cheapest model
+// (about $0.0003 per photo); set Anthropic:Model to use a stronger one.
+// Haiku 5.5 has no server-side refusal fallback, so a refusal is reported
+// as a recognition failure.
 public class ClaudeFoodRecognizer : IFoodRecognizer
 {
     private const string SystemPrompt = """
@@ -17,10 +18,11 @@ public class ClaudeFoodRecognizer : IFoodRecognizer
         what is on the scale. The scale has already been tared, so the measured weight is the food
         only, not the plate or bowl.
 
-        Name the food that makes up most of the weight, in English, as a short everyday name
-        ("fried rice with egg", "banana", "beef noodle soup"). If several foods share the plate,
-        name the combination ("rice with stir-fried broccoli and chicken") and estimate the
-        calorie density of the mix as served.
+        Name the food that makes up most of the weight, in English, as a short everyday name of
+        at most 30 characters, the way a person would say it ("fried rice with egg", "banana",
+        "beef noodle soup", "Greek salad"). It is shown on a small screen, so never list every
+        ingredient. If several foods share the plate, name the main combination ("chicken and
+        rice") and estimate the calorie density of the whole mix as served.
 
         Estimate kcal per 100 g for the food in the state shown (cooked vs raw, with or without
         sauce or broth). Use typical values from standard nutrition tables.
@@ -80,8 +82,6 @@ public class ClaudeFoodRecognizer : IFoodRecognizer
             {
                 Model = _options.Model,
                 MaxTokens = 4096,
-                Betas = ["server-side-fallback-2026-07-01"],
-                Fallbacks = new Default(),
                 System = SystemPrompt,
                 // A single-photo classification: low effort keeps the device's
                 // wait short without changing the model.

@@ -5,6 +5,6 @@ namespace backend.Services.Food;
 public class AnthropicOptions
 {
     public string? ApiKey { get; set; }
-    public string Model { get; set; } = "claude-opus-5-5";
+    public string Model { get; set; } = "claude-haiku-5-5";
     public int TimeoutSeconds { get; set; } = 60;
 }
