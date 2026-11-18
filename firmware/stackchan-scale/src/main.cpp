@@ -119,6 +119,8 @@ static camera_config_t cameraConfig = {
 };
 
 enum class State { Idle, Settling, Uploading, Result, Error };
+// Steps inside State::Uploading, shown on screen
+enum class UploadPhase { Photo, Sending, Recognizing };
 
 static UNIT_SCALES scales;
 static M5Canvas canvas(&M5.Display);
@@ -161,6 +163,8 @@ static uint32_t settleSince = 0;
 static uint32_t resultSince = 0;     // when the current Result/Error began
 static String line1, line2;        // result / error text
 static float uploadedWeight = 0;
+static UploadPhase uploadPhase = UploadPhase::Photo;
+static int uploadPct = 0;
 static bool cameraOk = false, scaleOk = false;
 
 // ---------------------------------------------------------------- helpers
@@ -472,7 +476,19 @@ static void drawScreen() {
             break;
         }
         case State::Uploading:
-            drawMessage("Uploading...", TFT_CYAN, String(uploadedWeight, 1) + " g");
+            switch (uploadPhase) {
+                case UploadPhase::Photo:
+                    drawMessage("Taking photo...", TFT_CYAN, String(uploadedWeight, 1) + " g");
+                    break;
+                case UploadPhase::Sending:
+                    drawMessage("Uploading " + String(uploadPct) + "%", TFT_CYAN, String(uploadedWeight, 1) + " g");
+                    canvas.fillRect(0, PREV_H - 4, PREV_W * uploadPct / 100, 4, TFT_CYAN);
+                    break;
+                case UploadPhase::Recognizing:
+                    drawMessage("Recognizing...", TFT_YELLOW, "Working out what it is");
+                    canvas.fillRect(0, PREV_H - 4, PREV_W, 4, TFT_YELLOW);
+                    break;
+            }
             break;
         case State::Result:
         case State::Error:
@@ -608,6 +624,41 @@ static String localDate() {
 
 // ---------------------------------------------------------------- upload
 
+// Request body as a Stream, so HTTPClient pulls it in chunks and we see how
+// far the upload got. Once the last chunk is taken the photo is on its way
+// to the server and the remaining wait is the server recognising it.
+class ProgressStream : public Stream {
+public:
+    ProgressStream(const uint8_t* data, size_t size) : _data(data), _size(size) {}
+    int available() override { return _size - _pos; }
+    int read() override { return _pos < _size ? _data[_pos++] : -1; }
+    int peek() override { return _pos < _size ? _data[_pos] : -1; }
+    size_t readBytes(char* buffer, size_t length) override {
+        size_t n = min(length, _size - _pos);
+        memcpy(buffer, _data + _pos, n);
+        _pos += n;
+        report();
+        return n;
+    }
+    size_t write(uint8_t) override { return 0; }
+
+private:
+    void report() {
+        int pct = _size ? _pos * 100 / _size : 100;
+        if (_pos >= _size) {
+            uploadPhase = UploadPhase::Recognizing;
+            drawScreen();
+        } else if (pct - uploadPct >= 5 || millis() - _lastDraw > 300) {
+            uploadPct = pct;   // redraw every 5% or 300ms, not on every chunk
+            _lastDraw = millis();
+            drawScreen();
+        }
+    }
+    const uint8_t* _data;
+    size_t _size, _pos = 0;
+    uint32_t _lastDraw = 0;
+};
+
 // Builds the multipart body by hand (HTTPClient has no multipart helper)
 // in PSRAM, then POSTs it with the device key.
 static bool upload(const uint8_t* jpg, size_t jpgLen, float grams, String& outLine1, String& outLine2) {
@@ -666,7 +717,11 @@ static bool upload(const uint8_t* jpg, size_t jpgLen, float grams, String& outLi
     http.addHeader("X-Device-Key", DEVICE_KEY);
     http.addHeader("Content-Type", String("multipart/form-data; boundary=") + boundary);
 
-    int code = http.POST(body, total);
+    uploadPhase = UploadPhase::Sending;
+    uploadPct = 0;
+    drawScreen();
+    ProgressStream bodyStream(body, total);
+    int code = http.sendRequest("POST", &bodyStream, total);
     String resp = code > 0 ? http.getString() : "";
     http.end();
     free(body);
@@ -701,6 +756,7 @@ static bool upload(const uint8_t* jpg, size_t jpgLen, float grams, String& outLi
 static void captureAndUpload() {
     uploadedWeight = weight;
     state = State::Uploading;
+    uploadPhase = UploadPhase::Photo;
     setLed(0x000020);
     drawScreen();
 
