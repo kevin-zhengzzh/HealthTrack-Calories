@@ -1,11 +1,8 @@
 name: Deploy
 
-# Runs after CI passes on main (or manually from the Actions tab).
+# Manual only for now: image / Container App names below still point at the
+# live Phase 2 deployment. Rename them before re-enabling the workflow_run trigger.
 on:
-  workflow_run:
-    workflows: [CI]
-    types: [completed]
-    branches: [main]
   workflow_dispatch:
 
 env:
