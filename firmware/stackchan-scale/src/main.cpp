@@ -28,11 +28,20 @@
 #include <Preferences.h>
 #include "UNIT_SCALES.h"
 #include "head.h"
+#include "netsetup.h"
 
+// Wi-Fi and the device key are set up on the device itself now (phone setup
+// portal + pairing code). secrets.h is optional: API_BASE_URL / TIMEZONE
+// override the defaults below, and WIFI_SSID / DEVICE_KEY, if present, are
+// copied into NVS once on first boot (handy during development).
 #if __has_include("secrets.h")
 #include "secrets.h"
-#else
-#error "Copy include/secrets.example.h to include/secrets.h and fill it in"
+#endif
+#ifndef API_BASE_URL
+#define API_BASE_URL "https://healthtrack-backend.icyglacier-3b078f70.australiaeast.azurecontainerapps.io"
+#endif
+#ifndef TIMEZONE
+#define TIMEZONE "NZST-12NZDT,M9.5.0,M4.1.0/3"
 #endif
 
 // ---- Tuning ----
@@ -63,7 +72,12 @@ static constexpr int GEAR_X = TARE_X, GEAR_Y = TARE_Y - 46, GEAR_W = TARE_W, GEA
 // control and power in the right column, live camera view kept for aiming
 struct Rect { int x, y, w, h; };
 static constexpr Rect BTN_DONE  = {PANEL_X + 6, 6, PANEL_W - 12, 34};
-static constexpr Rect BTN_CENTER = {PANEL_X + 6, 122, PANEL_W - 12, 34};
+static constexpr Rect BTN_WIFI  = {PANEL_X + 6, 46, PANEL_W - 12, 34};
+static constexpr Rect BTN_CENTER = {PANEL_X + 6, 142, PANEL_W - 12, 34};
+// Wi-Fi setup and pairing screens
+static constexpr Rect BTN_SETUP_EXIT  = {LCD_W - 80, LCD_H - 42, 74, 36};
+static constexpr Rect BTN_SETUP_RESET = {LCD_W - 160, LCD_H - 42, 74, 36};
+static constexpr Rect BTN_PAIR_WIFI   = {LCD_W - 80, LCD_H - 42, 74, 36};
 static constexpr Rect BTN_POWER = {PANEL_X + 6, MSG_Y + 6, PANEL_W - 12, 48};
 // Aim joystick on the main screen: tap the camera view to show it in the
 // middle, drag the knob to turn the head (further = faster), let go to stop.
@@ -117,6 +131,18 @@ static camera_config_t cameraConfig = {
     .grab_mode    = CAMERA_GRAB_LATEST, // always the newest frame, never a stale one
     .sccb_i2c_port = -1,
 };
+
+// What the device as a whole is doing. Normal = the weighing state machine below.
+enum class Mode { Normal, WifiSetup, Pairing };
+static Mode mode = Mode::Normal;
+
+// Device key from pairing, stored in NVS namespace "dev"
+static String deviceKey;
+
+// Pairing-code flow
+static String pairCode, pairToken, pairMsg;
+static uint32_t pairExpiresAt = 0, nextPairPoll = 0;
+static uint32_t resetArmedUntil = 0;
 
 enum class State { Idle, Settling, Uploading, Result, Error };
 // Steps inside State::Uploading, shown on screen
@@ -415,22 +441,23 @@ static void drawSettings() {
 
     bool h = head::ok();
 
-    // Right column: done, head angles, center, power
+    // Right column: done, Wi-Fi, head angles, home, power
     const int cx = PANEL_X + PANEL_W / 2;
     canvas.fillRect(PANEL_X, 0, PANEL_W, LCD_H, 0x10A2);
     drawButton(BTN_DONE, "Done", 0x2C4A);
+    drawButton(BTN_WIFI, "Wi-Fi", 0x2C4A);
     canvas.setTextDatum(middle_center);
     canvas.setFont(&fonts::Font0);
     if (h) {
         canvas.setTextColor(TFT_LIGHTGREY);
-        canvas.drawString("HEAD", cx, 54);
+        canvas.drawString("HEAD", cx, 90);
         canvas.setFont(&fonts::Font2);
         canvas.setTextColor(TFT_WHITE);
-        canvas.drawString("tilt " + fmtTenths(headPitch), cx, 76);
-        canvas.drawString("turn " + fmtTenths(headYaw), cx, 98);
+        canvas.drawString("tilt " + fmtTenths(headPitch), cx, 106);
+        canvas.drawString("turn " + fmtTenths(headYaw), cx, 124);
     } else {
         canvas.setTextColor(TFT_ORANGE);
-        canvas.drawString("NO SERVOS", cx, 76);
+        canvas.drawString("NO SERVOS", cx, 110);
     }
     drawButton(BTN_CENTER, "Home", 0x2C4A, h && !atHome());
     bool armed = millis() < powerArmedUntil;
@@ -589,6 +616,15 @@ static void handleSettingsTap() {
         brightness = constrain(brightness + (tapped(BTN_BRIGHT) ? BRIGHT_STEP : -BRIGHT_STEP), BRIGHT_MIN, BRIGHT_MAX);
         M5.Display.setBrightness(brightness);
     }
+    if (tapped(BTN_WIFI)) {
+        settingsOpen = false;
+        prefs.putInt("bright", brightness);
+        saveHead();
+        mode = Mode::WifiSetup;
+        resetArmedUntil = 0;
+        net::startPortal();
+        return;
+    }
     if (tapped(BTN_CENTER)) {
         moveHeadTo(0, HOME_PITCH);
         Serial.println("Head: home");
@@ -659,12 +695,247 @@ private:
     uint32_t _lastDraw = 0;
 };
 
+// ---------------------------------------------------------------- HTTP + device key
+
+static bool beginHttp(HTTPClient& http, WiFiClient& plain, WiFiClientSecure& secure, const String& url) {
+    if (url.startsWith("https://")) {
+        // TODO: verify the server certificate (CA bundle). Until then the
+        // traffic is encrypted but a spoofed server isn't detected.
+        secure.setInsecure();
+        return http.begin(secure, url);
+    }
+    return http.begin(plain, url);
+}
+
+// Small JSON POST for the pairing endpoints; returns the HTTP status (<= 0 on network errors)
+static int postJson(const char* path, const String& body, String& response) {
+    if (WiFi.status() != WL_CONNECTED) return -1;
+    HTTPClient http;
+    WiFiClient plain;
+    WiFiClientSecure secure;
+    if (!beginHttp(http, plain, secure, String(API_BASE_URL) + path)) return -1;
+    http.setTimeout(HTTP_TIMEOUT);
+    http.addHeader("Content-Type", "application/json");
+    int code = http.POST(body);
+    response = code > 0 ? http.getString() : "";
+    http.end();
+    return code;
+}
+
+static void loadDeviceKey() {
+    Preferences p;
+    p.begin("dev", false);
+    deviceKey = p.getString("key", "");
+#ifdef DEVICE_KEY
+    // One-time migration from secrets.h (development builds)
+    if (deviceKey.isEmpty() && String(DEVICE_KEY).startsWith("hk_")) {
+        deviceKey = DEVICE_KEY;
+        p.putString("key", deviceKey);
+        Serial.println("Device key imported from secrets.h");
+    }
+#endif
+    p.end();
+}
+
+static void saveDeviceKey(const String& key) {
+    Preferences p;
+    p.begin("dev", false);
+    p.putString("key", key);
+    p.end();
+    deviceKey = key;
+}
+
+static void clearDeviceKey() {
+    Preferences p;
+    p.begin("dev", false);
+    p.remove("key");
+    p.end();
+    deviceKey = "";
+    Serial.println("Device key cleared");
+}
+
+// ---------------------------------------------------------------- pairing code
+
+// Ask the backend for a fresh 6-digit code; the private token stays here
+static void startPairing() {
+    String resp;
+    int code = postJson("/api/device/pairing/start", "{\"name\":\"Stack-chan\"}", resp);
+    JsonDocument doc;
+    if (code == 200 && !deserializeJson(doc, resp)) {
+        pairCode = (const char*)(doc["code"] | "");
+        pairToken = (const char*)(doc["pairingToken"] | "");
+        // Server sends an absolute expiry; the device clock may be off, so use the 10-minute lifetime locally
+        pairExpiresAt = millis() + 10 * 60 * 1000UL;
+        nextPairPoll = millis() + (doc["pollSeconds"] | 3) * 1000UL;
+        pairMsg = "";
+        Serial.printf("Pairing: code %s\n", pairCode.c_str());
+    } else {
+        pairCode = pairToken = "";
+        pairMsg = code == 429 ? "Too many attempts, waiting..." : "Server unreachable, retrying...";
+        nextPairPoll = millis() + (code == 429 ? 60000UL : 5000UL);
+        Serial.printf("Pairing: start failed (%d)\n", code);
+    }
+}
+
+// Check whether someone has entered our code on the website yet
+static void pollPairing() {
+    String body = String("{\"pairingToken\":\"") + pairToken + "\"}";
+    String resp;
+    int code = postJson("/api/device/pairing/poll", body, resp);
+    JsonDocument doc;
+    if (code != 200 || deserializeJson(doc, resp)) {
+        pairMsg = "Server unreachable, retrying...";
+        nextPairPoll = millis() + 5000;
+        if (code == 404) pairCode = pairToken = "";  // unknown pairing: start over
+        return;
+    }
+    pairMsg = "";
+    String status = doc["status"] | "";
+    if (status == "paired") {
+        saveDeviceKey(String((const char*)(doc["key"] | "")));
+        String name = doc["deviceName"] | "Stack-chan";
+        Serial.printf("Pairing: done, now '%s'\n", name.c_str());
+        pairCode = pairToken = "";
+        mode = Mode::Normal;
+        state = State::Result;
+        line1 = "Paired!";
+        line2 = "Now " + name;
+        resultSince = millis() - RESULT_PHOTO_MS;  // no photo to hold
+        setLed(0x002000);
+    } else if (status == "expired") {
+        pairCode = pairToken = "";  // a new code is requested next loop
+    } else {
+        nextPairPoll = millis() + 3000;
+    }
+}
+
+static void pairingLoop() {
+    if (WiFi.status() != WL_CONNECTED) return;
+    if (millis() < nextPairPoll) return;
+    if (pairToken.isEmpty() || millis() > pairExpiresAt) startPairing();
+    else pollPairing();
+}
+
+// ---------------------------------------------------------------- setup screens
+
+static void drawSetupScreen() {
+    canvas.fillSprite(0x10A2);
+    canvas.setTextColor(TFT_WHITE);
+    canvas.setTextDatum(top_left);
+    canvas.setFont(&fonts::Font4);
+    canvas.drawString("Wi-Fi setup", 8, 6);
+
+    // QR joins the setup hotspot (it carries the password, so no typing)
+    canvas.fillRoundRect(6, 36, 150, 150, 6, TFT_WHITE);
+    canvas.qrcode(net::apQrText().c_str(), 11, 41, 140, 3);
+
+    const int x = 166;
+    canvas.setFont(&fonts::Font2);
+    canvas.drawString("1. Scan with your", x, 38);
+    canvas.drawString("   phone camera", x, 54);
+    canvas.drawString("2. Join the network", x, 76);
+    canvas.drawString("3. Pick your Wi-Fi", x, 98);
+    canvas.drawString("   on the page", x, 114);
+    canvas.setFont(&fonts::Font0);
+    canvas.setTextColor(TFT_LIGHTGREY);
+    canvas.drawString(net::apSsid(), x, 136);
+    canvas.drawString("pw " + net::apPassword(), x, 148);
+
+    // Status of the attempt started from the phone
+    auto st = net::portalState();
+    uint16_t c = st == net::PortalState::Connected ? TFT_GREEN
+               : st == net::PortalState::Failed ? TFT_RED : TFT_YELLOW;
+    String m = net::portalMessage();
+    if (m.isEmpty()) m = net::savedCount() ? "Saved: " + net::savedSsid(0) : "No Wi-Fi saved yet";
+    canvas.setTextColor(c);
+    canvas.setFont(&fonts::Font2);
+    canvas.drawString(m.substring(0, 18), 8, LCD_H - 46);
+    if (m.length() > 18) canvas.drawString(m.substring(18, 36), 8, LCD_H - 28);
+
+    bool armed = millis() < resetArmedUntil;
+    drawButton(BTN_SETUP_RESET, armed ? "Sure?" : "Reset", armed ? (uint16_t)0xF800 : (uint16_t)0x9000);
+    drawButton(BTN_SETUP_EXIT, "Exit", 0x2C4A);
+    canvas.pushSprite(0, 0);
+}
+
+static void handleSetupTap() {
+    if (tapped(BTN_SETUP_EXIT)) {
+        net::stopPortal();
+        mode = Mode::Normal;
+    } else if (tapped(BTN_SETUP_RESET)) {
+        if (millis() < resetArmedUntil) {
+            // Factory reset: forget every network and the device key
+            net::forgetAll();
+            clearDeviceKey();
+            resetArmedUntil = 0;
+        } else {
+            resetArmedUntil = millis() + 3000;
+        }
+    }
+}
+
+static void drawPairingScreen() {
+    canvas.fillSprite(0x10A2);
+    canvas.setTextColor(TFT_WHITE);
+    canvas.setTextDatum(top_left);
+    canvas.setFont(&fonts::Font4);
+    canvas.drawString("Pair this Stack-chan", 8, 6);
+
+    canvas.setTextDatum(middle_center);
+    bool online = WiFi.status() == WL_CONNECTED;
+    if (!online) {
+        canvas.setFont(&fonts::Font4);
+        canvas.setTextColor(TFT_ORANGE);
+        canvas.drawString("No Wi-Fi", LCD_W / 2, 90);
+        canvas.setFont(&fonts::Font2);
+        canvas.setTextColor(TFT_WHITE);
+        canvas.drawString(net::savedCount() ? "Trying saved networks..." : "Tap Wi-Fi to set it up", LCD_W / 2, 124);
+    } else if (pairCode.length() == 6) {
+        // "483 920" in big seven-segment digits
+        canvas.setFont(&fonts::Font7);
+        canvas.setTextColor(TFT_GREEN);
+        canvas.drawString(pairCode.substring(0, 3) + " " + pairCode.substring(3), LCD_W / 2, 84);
+        canvas.setFont(&fonts::Font2);
+        canvas.setTextColor(TFT_WHITE);
+        canvas.drawString("Enter this code in HealthTrack:", LCD_W / 2, 130);
+        canvas.drawString("Food Log > Add device", LCD_W / 2, 148);
+        uint32_t left = pairExpiresAt > millis() ? (pairExpiresAt - millis()) / 1000 : 0;
+        canvas.setTextColor(TFT_LIGHTGREY);
+        char buf[24];
+        snprintf(buf, sizeof buf, "expires in %lu:%02lu", (unsigned long)(left / 60), (unsigned long)(left % 60));
+        canvas.drawString(buf, LCD_W / 2, 170);
+    } else {
+        canvas.setFont(&fonts::Font2);
+        canvas.setTextColor(TFT_WHITE);
+        canvas.drawString("Getting a pairing code...", LCD_W / 2, 100);
+    }
+
+    if (pairMsg.length()) {
+        canvas.setTextDatum(top_left);
+        canvas.setFont(&fonts::Font2);
+        canvas.setTextColor(TFT_YELLOW);
+        canvas.drawString(pairMsg, 8, LCD_H - 34);
+    }
+    drawButton(BTN_PAIR_WIFI, "Wi-Fi", 0x2C4A);
+    canvas.pushSprite(0, 0);
+}
+
+static void handlePairingTap() {
+    if (tapped(BTN_PAIR_WIFI)) {
+        mode = Mode::WifiSetup;
+        resetArmedUntil = 0;
+        net::startPortal();
+    }
+}
+
+// ---------------------------------------------------------------- upload
+
 // Builds the multipart body by hand (HTTPClient has no multipart helper)
 // in PSRAM, then POSTs it with the device key.
 static bool upload(const uint8_t* jpg, size_t jpgLen, float grams, String& outLine1, String& outLine2) {
     if (WiFi.status() != WL_CONNECTED) {
         outLine1 = "No Wi-Fi";
-        outLine2 = "Check secrets.h";
+        outLine2 = "Settings > Wi-Fi to add one";
         return false;
     }
 
@@ -699,22 +970,14 @@ static bool upload(const uint8_t* jpg, size_t jpgLen, float grams, String& outLi
     HTTPClient http;
     WiFiClient plain;
     WiFiClientSecure secure;
-    bool ok;
-    if (url.startsWith("https://")) {
-        // No CA bundle on the device; the key is still only sent over TLS
-        secure.setInsecure();
-        ok = http.begin(secure, url);
-    } else {
-        ok = http.begin(plain, url);
-    }
-    if (!ok) {
+    if (!beginHttp(http, plain, secure, url)) {
         free(body);
         outLine1 = "Bad API_BASE_URL";
         outLine2 = "";
         return false;
     }
     http.setTimeout(HTTP_TIMEOUT);
-    http.addHeader("X-Device-Key", DEVICE_KEY);
+    http.addHeader("X-Device-Key", deviceKey);
     http.addHeader("Content-Type", String("multipart/form-data; boundary=") + boundary);
 
     uploadPhase = UploadPhase::Sending;
@@ -745,6 +1008,15 @@ static bool upload(const uint8_t* jpg, size_t jpgLen, float grams, String& outLi
             outLine2 = String(kcal) + " kcal  (today " + String(today) + ")";
         }
         return true;
+    }
+
+    if (code == 401) {
+        // The key was revoked on the website (or never valid): forget it and
+        // go back to showing a pairing code
+        clearDeviceKey();
+        outLine1 = "Device removed";
+        outLine2 = "Pair it again on the website";
+        return false;
     }
 
     outLine1 = code > 0 ? "Error " + String(code) : "Server unreachable";
@@ -791,29 +1063,17 @@ static void captureAndUpload() {
 
 // ---------------------------------------------------------------- Wi-Fi
 
-// The library's auto-reconnect only retries for some disconnect reasons
-// (e.g. NO_AP_FOUND, beacon timeout) and silently gives up on others
-// (ASSOC_LEAVE, handshake timeouts) — common on a weak signal. This
-// watchdog restarts the connection attempt whatever the reason.
-// WiFi.begin() is non-blocking, so the screen and scale keep running.
-static constexpr uint32_t WIFI_RETRY_MS = 20000;
-static uint32_t lastWifiAttempt = 0;
+// Reconnecting (any saved network, strongest first) lives in net::maintain();
+// this just logs changes.
 static bool wasOnline = false;
 
-static void wifiWatchdog() {
+static void logWifiChanges() {
     bool online = WiFi.status() == WL_CONNECTED;
-    if (online != wasOnline) {
-        wasOnline = online;
-        if (online) Serial.printf("Wi-Fi connected: %s (%d dBm)\n", WiFi.localIP().toString().c_str(), WiFi.RSSI());
-        else Serial.println("Wi-Fi lost");
-        lastWifiAttempt = millis();  // give the library's own retry a head start
-    }
-    if (!online && millis() - lastWifiAttempt >= WIFI_RETRY_MS) {
-        lastWifiAttempt = millis();
-        Serial.println("Wi-Fi watchdog: retrying");
-        WiFi.disconnect();
-        WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
-    }
+    if (online == wasOnline) return;
+    wasOnline = online;
+    if (online) Serial.printf("Wi-Fi connected: '%s' %s (%d dBm)\n", WiFi.SSID().c_str(),
+                              WiFi.localIP().toString().c_str(), WiFi.RSSI());
+    else Serial.println("Wi-Fi lost");
 }
 
 // ---------------------------------------------------------------- setup/loop
@@ -868,24 +1128,30 @@ void setup() {
     }
     setLed(0x002000);
 
+    net::begin();
+#ifdef WIFI_SSID
+    // One-time migration from secrets.h (development builds)
+    if (net::savedCount() == 0 && strlen(WIFI_SSID) > 0) {
+        net::addNetwork(WIFI_SSID, WIFI_PASSWORD);
+        Serial.println("Wi-Fi network imported from secrets.h");
+    }
+#endif
+    loadDeviceKey();
+
     showBootMessage("Connecting Wi-Fi...");
     WiFi.mode(WIFI_STA);
     WiFi.setAutoReconnect(true);
-    WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
-    for (int i = 0; i < 40 && WiFi.status() != WL_CONNECTED; i++) delay(250);
-    Serial.printf("Wi-Fi: %s %s\n", WiFi.status() == WL_CONNECTED ? "connected" : "not connected",
-                  WiFi.localIP().toString().c_str());
-    if (WiFi.status() != WL_CONNECTED) {
-        // Diagnostics: what can the device actually see? (2.4GHz only)
-        int n = WiFi.scanNetworks();
-        Serial.printf("Visible networks (%d):\n", n);
-        for (int i = 0; i < n; i++)
-            Serial.printf("  '%s'  ch%d  %ddBm\n", WiFi.SSID(i).c_str(), WiFi.channel(i), WiFi.RSSI(i));
-        WiFi.scanDelete();
-        WiFi.begin(WIFI_SSID, WIFI_PASSWORD);  // keep trying in the background
+    bool online = net::connectBest(15000);
+    Serial.printf("Wi-Fi: %s (%d saved)\n", online ? "connected" : "not connected", net::savedCount());
+    wasOnline = online;
+
+    if (!online && net::savedCount() == 0) {
+        // First run: nothing to connect to, so start phone setup right away
+        mode = Mode::WifiSetup;
+        net::startPortal();
+    } else if (deviceKey.isEmpty()) {
+        mode = Mode::Pairing;
     }
-    wasOnline = WiFi.status() == WL_CONNECTED;
-    lastWifiAttempt = millis();
 
     configTzTime(TIMEZONE, "pool.ntp.org", "time.google.com");
 }
@@ -899,7 +1165,6 @@ void loop() {
         tapX = t.x;
         tapY = t.y;
     }
-    wifiWatchdog();
     updateScale();
 
     // Servos missing at boot: keep retrying (quick, non-blocking) for 30s
@@ -907,6 +1172,42 @@ void loop() {
     if (!head::ok() && millis() < 30000 && millis() - lastHeadRetry >= 3000) {
         lastHeadRetry = millis();
         if (head::begin(0)) head::setPose(headYaw, headPitch);
+    }
+
+    // Phone Wi-Fi setup: the portal runs until a network works, then we
+    // carry on (to pairing if this device has no key yet)
+    if (mode == Mode::WifiSetup) {
+        net::portalLoop();
+        handleSetupTap();
+        if (net::portalFinished()) {
+            net::stopPortal();
+            mode = Mode::Normal;
+        }
+        if (mode == Mode::WifiSetup) {
+            drawSetupScreen();
+            delay(10);  // keep the web server responsive
+            return;
+        }
+    }
+
+    net::maintain();
+    logWifiChanges();
+
+    // No key yet (first run, or removed on the website): show a pairing code
+    if (mode == Mode::Normal && deviceKey.isEmpty()) {
+        mode = Mode::Pairing;
+        settingsOpen = false;
+        if (aimVisible) hideAim();
+        state = State::Idle;
+    }
+    if (mode == Mode::Pairing) {
+        pairingLoop();
+        handlePairingTap();
+        if (mode == Mode::Pairing) {
+            drawPairingScreen();
+            delay(50);
+            return;
+        }
     }
 
     if (settingsOpen) {
