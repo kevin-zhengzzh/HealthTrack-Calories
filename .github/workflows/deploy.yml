@@ -1,19 +1,26 @@
 name: Deploy
 
-# Manual only for now: image / Container App names below still point at the
-# live Phase 2 deployment. Rename them before re-enabling the workflow_run trigger.
+# Deploys to its own Container Apps, separate from the Phase 2 deployment
+# (msa-backend / msa-frontend), which stays untouched. Manual only until the
+# first deploy has succeeded; then add the automatic trigger back:
+#   workflow_run:
+#     workflows: [CI]
+#     types: [completed]
+#     branches: [main]
 on:
   workflow_dispatch:
 
 env:
   # Single Docker Hub repo; backend/frontend are distinguished by tag prefix.
-  IMAGE_REPO: kevinzheng123/msa-phase2
-  # Azure Container Apps names (from the live URLs in README).
-  BACKEND_APP: msa-backend
-  FRONTEND_APP: msa-frontend
+  IMAGE_REPO: kevinzheng123/healthtrack-calories
+  # Created once by hand in the Phase 2 resource group's Container Apps
+  # environment; this workflow only rolls out new images to them.
+  BACKEND_APP: healthtrack-backend
+  FRONTEND_APP: healthtrack-frontend
   AZURE_RESOURCE_GROUP: msa-phase2
-  # Baked into the frontend bundle at build time.
-  VITE_API_URL: https://msa-backend.icyglacier-3b078f70.australiaeast.azurecontainerapps.io
+  # Baked into the frontend bundle at build time. Same environment as
+  # Phase 2, so the same default domain.
+  VITE_API_URL: https://healthtrack-backend.icyglacier-3b078f70.australiaeast.azurecontainerapps.io
 
 jobs:
   deploy:
