@@ -1,0 +1,210 @@
+# AGENTS.md
+
+给在这个仓库里工作的 AI agent（以及回头翻看的自己）的项目手册：结构、命令、约定、**关键决策**和**开发节点**。
+
+**维护规则**：每做出一个关键决策、完成一个节点、踩到一个值得记的坑，就更新对应章节。决策只追加不删除；被推翻的决策标注"已被 D-xx 取代"。
+
+---
+
+## 1. 项目是什么
+
+HealthTrack 是一个健康习惯 App（打卡、运动记录、积分、排行榜、皮肤商城、AI 助手）。最初是 MSA 2026 Phase 2 的作业项目（仓库 `kevin-zhengzzh/MSA-2026-Phase2`），本仓库 `HealthTrack-Calories` 从它的 `67fb2f4` 复制而来，继续开发**卡路里摄入**功能：
+
+> Stack-chan 机器人（M5Stack CoreS3）+ Mini Scales 称重 → 自动拍照 → 上传后端 → Claude 识别食物和每 100g 热量 → 按实测重量算总热量 → 网页 Food Log 查看。
+
+Phase 2 的原始设计文档在 `specs/`（`05-design-decisions.md` 是 Phase 2 时期的决策，`06-ai-features-spec.md` 是 AI 助手规格）。本文件记录**从本仓库开始**的决策。
+
+## 2. 仓库结构
+
+```
+software/backend/    C# / .NET 10, EF Core + PostgreSQL, JWT。Tests/ 是 xUnit（内存库 + 假 AI，不调用真模型）
+software/frontend/   React 19 + TypeScript + Vite + Tailwind v4 + Zustand
+software/scripts/    seed-demo.sql（演示数据）、send-meal.ps1（模拟设备上传）
+firmware/stackchan-scale/   PlatformIO 固件（Arduino on ESP32-S3）
+  src/main.cpp       称重/拍照/上传状态机、UI、触摸、Wi-Fi
+  src/head.cpp       舵机（SCS0009）+ PY32 IO 扩展芯片供电
+  lib/FTServo/       飞特舵机库（MIT，来自 m5stack/StackChan，有 IDF 4.4 兼容补丁）
+  include/secrets.h  Wi-Fi、后端地址、设备密钥（git 忽略；模板 secrets.example.h）
+.github/workflows/   ci.yml（每次 push/PR 到 main），deploy.yml（目前仅手动触发）
+specs/               Phase 2 的规划、提示词日志、设计决策
+```
+
+## 3. 常用命令
+
+```bash
+# 后端测试（software/backend/Tests/）
+dotnet test
+# 新迁移（software/backend/）
+dotnet ef migrations add <Name>
+# 前端（software/frontend/）
+npm ci && npm run build && npm test && npx oxlint src
+# 固件编译 + 烧录（firmware/stackchan-scale/）。PlatformIO 装在 E 盘，C 盘空间不足
+PLATFORMIO_CORE_DIR='E:\.platformio' python -m platformio run -t upload --upload-port COM3
+# 本地后端给局域网设备用（不要碰 Phase 2 的 healthtracker 库）
+ConnectionStrings__DefaultConnection="Host=localhost;Port=5432;Database=healthtrack_calories_dev;Username=postgres;Password=postgres" \
+  dotnet run --no-launch-profile --urls http://0.0.0.0:5000
+```
+
+本地密钥用 `dotnet user-secrets`（`DeepSeek:ApiKey`、`Anthropic:ApiKey`），由用户自己设置，**不经过聊天**。
+
+## 4. 约定
+
+- 和用户交流用**中文**；代码、注释、提交信息、PR 描述用英文。
+- 功能在分支上开发，经 PR 合并到 `main`（CI 必须绿）。提交信息末尾带 `Co-Authored-By` 行。
+- 提交前检查：密钥、Wi-Fi 密码、设备密钥、连接串不能进 git（`secrets.h` 已忽略）；用户截图里出现密钥时提醒其轮换。
+- 业务代码只依赖 AI 抽象接口（`IChatModel`、`IFoodRecognizer`），测试用假实现。
+- 数字由代码算，模型只给语义（例如热量 = 实测重量 × 模型给的 kcal/100g）。
+
+## 5. 线上环境
+
+| 资源 | 值 |
+|---|---|
+| 前端 | https://healthtrack-frontend.icyglacier-3b078f70.australiaeast.azurecontainerapps.io |
+| 后端 | https://healthtrack-backend.icyglacier-3b078f70.australiaeast.azurecontainerapps.io |
+| Azure | 资源组 `msa-phase2`，环境 `managedEnvironment-msaphase2-a491`（与 Phase 2 共用），Container Apps `healthtrack-backend` / `healthtrack-frontend`，副本 0–1 |
+| 镜像 | Docker Hub `kevinzheng123/healthtrack-calories`（Public），标签 `backend-<sha>` / `frontend-<sha>` |
+| 数据库 | Neon 项目 `msa-phase2`，production 分支下的独立数据库 `healthtrack_calories` |
+| 后端机密 | `db-connection`、`jwt-key`、`deepseek-api-key`、`healthtrack-prod`（Anthropic key）→ 环境变量 `ConnectionStrings__DefaultConnection` / `Jwt__Key` / `DeepSeek__ApiKey` / `Anthropic__ApiKey` |
+| GitHub Secrets | `DOCKERHUB_USERNAME`、`DOCKERHUB_TOKEN`、`AZURE_CREDENTIALS`（服务主体，仅限资源组 `msa-phase2`） |
+
+Phase 2 的 `msa-backend` / `msa-frontend` 和它的 `neondb` 库**保持不动**。
+
+---
+
+## 6. 关键决策
+
+格式：问题 → 决定 → 原因 → 代价/备注。
+
+### D-01 拍照识别放在后端，设备不直连 Claude（2026-11-18）
+- **决定**：设备只上传 JPEG + 克数到 `POST /api/intake/device`；后端调用视觉模型。
+- **原因**：Anthropic Key 不能烧进固件（可从 Flash 读出）；后端统一做配额、日志、存储；改提示词/换模型不用重新烧录。
+- **代价**：多一跳网络。
+
+### D-02 设备用独立的设备密钥认证，不用 JWT（2026-11-18）
+- **决定**：网页上配对生成 `hk_` 开头的密钥，只显示一次，库里只存 SHA-256；请求头 `X-Device-Key`；可撤销，每人最多 5 台。
+- **原因**：固件里存账号密码不安全，JWT 会过期；设备密钥泄露可单独作废。
+- **备注**：密钥是 32 字节随机数，用不加盐的 SHA-256 足够，且能按哈希直接查找。
+
+### D-03 总热量由代码根据实测重量计算（2026-11-18）
+- **决定**：模型只返回 `foodName`、`caloriesPer100g`、`confidence`、`isFood`（JSON schema 约束），`Calories = round(weight × kcal/100g / 100)`。
+- **原因**：重量是秤的真实测量值，比模型从照片估算可靠。
+- **备注**：需要先去皮，提示词假设重量不含盘子。
+
+### D-04 没有 API Key 时只存照片 + 重量（2026-11-18）
+- **决定**：`IFoodRecognizer.IsAvailable == false` 时跳过识别，记录名称为空，网页显示 "Unnamed food"，用户手动补填。每日上限 200 次（有识别时 60 次）。
+- **原因**：用户要求"先不管识别，先把图片和重量传回客户端"；也让没有 Key 的环境（CI、本地）能完整跑通。
+
+### D-05 照片以 bytea 存在 PostgreSQL（2026-11-18）
+- **决定**：`IntakeRecords.ImageData`，和头像的存法一致；照片接口需要 JWT，前端用 fetch + blob URL 显示。
+- **原因**：640×480 JPEG 约 22KB，Neon 免费 0.5GB 可存约 2 万张，暂时不值得引入对象存储。
+- **以后**：数据量变大时迁到 Blob Storage，库里只存链接。
+- **隐私**：判定为非食物的照片不入库（只有一行 `AiUsageLogs` 元数据）。
+
+### D-06 识别模型用 Claude Haiku 5.5（2026-11-18，取代最初的 Opus 5.5）
+- **决定**：默认 `claude-haiku-5-5`，`Effort.Low`，结构化输出；可通过 `Anthropic:Model` 配置换模型。
+- **原因**：用户要求最便宜。实测约 **$0.00015/张**（比 Opus 便宜约 25 倍），香蕉、苹果的 kcal/100g 与 USDA 一致，非食物能正确拒绝。
+- **代价**：Haiku 5.5 不支持服务端拒答回退（已去掉该 beta）；混合菜估算有约 ±15% 的波动。
+- **提示词约束**：食物名 ≤ 30 字符（沙拉曾返回 67 字符的食材列表，屏幕放不下）。
+
+### D-07 固件流程由秤驱动，重量稳定后自动拍照（2026-11-18）
+- **决定**：> 5g 且 1.5 秒内波动 ≤ ±1g → 拍照上传；结果停留到重量 < 5g（食物拿走）才回到待机。
+- **原因**：一开始相机初始化占用内部 I2C，触摸不可用；而且自动触发更顺手。后来触摸修好了，也保留了这个流程。
+
+### D-08 相机 640×480 RGB565，软件压 JPEG（2026-11-18）
+- **决定**：GC0308 最大 VGA、无硬件 JPEG；帧放 PSRAM（600KB），`frame2jpg` 质量 80；XCLK 10MHz（20MHz 会 EV-EOF-OVF）；预览按 3/8 缩到 240×180，保持 4:3 不裁切。
+
+### D-09 秤：热插拔 + 等稳定再去皮 + 零点跟踪（2026-11-18）
+- **决定**：每 0.5 秒探测地址 0x26；只在探测成功时读重量并丢弃 -1000～6000g 以外的值；开机/插上后等读数 2 秒内波动 < 0.5g 再去皮；空秤时 2g 以内的稳定偏移 5 秒后自动归零；显示 < 0.3g 记为 0.0。
+- **原因**：库的 `getWeight()` 读失败会返回未初始化的值，可能误触发上传；开机瞬间去皮会记下漂移中的零点。
+
+### D-10 内部 I2C 交还给 M5Unified，以启用触摸和舵机（2026-11-18）
+- **决定**：相机初始化后 `i2c_driver_delete()` 卸载相机的驱动，再 `M5.In_I2C.begin()`。
+- **原因**：两个驱动同时挂在一条总线上，读写时好时坏；相机推流不需要 SCCB。
+
+### D-11 舵机控制自己实现，不用官方动画框架（2026-11-18）
+- **决定**：UART1 1Mbps GPIO6/7，舵机 ID 1（左右）/2（俯仰），经 PY32 IO 扩展芯片（0x6F）的引脚 0 打开供电；**I2C 必须 100kHz**；读出厂校准值（NVS `servo/zero_pos_1|2`）；俯仰限制在 5°–85°（M5Stack 建议），左右收窄到 ±90°（自定，官方 ±128°）。
+- **代价**：没有移植官方的堵转保护。
+- **交互**：主界面点画面出现半透明摇杆（拖得越远转得越快）；设置页有 Home（左右 0°、俯仰 5°）。
+
+### D-12 上传过程分阶段显示（2026-11-18）
+- **决定**：请求体包装成会报告进度的 Stream 交给 HTTPClient：Taking photo → Uploading N% → Recognizing… → 结果。
+- **原因**：原来整个过程都显示 "Uploading"，分不清是 Wi-Fi 慢还是识别慢。
+
+### D-13 新项目单独部署，不覆盖 Phase 2（2026-11-19）
+- **决定**：同一个 Container Apps 环境里新建 `healthtrack-*` 应用，独立的 Docker Hub 仓库和 Neon 数据库，从空库开始。
+- **原因**：Phase 2 是作业成果，需要原样保留；新项目还在频繁改动，需要隔离风险。共用环境按用量计费，不额外收费，且域名可以提前确定。
+- **备注**：代码层面新仓库是旧仓库的超集，数据库迁移只新增表，所以覆盖部署也是安全的，只是没有选择这样做。
+
+### D-15 用配对码绑定设备，不再手动复制密钥（2026-11-19，部分取代 D-02 的配对方式）
+- **决定**：设备 `POST /api/device/pairing/start` 拿到 6 位配对码和**设备私有令牌**；用户在网页 Food Log → Add device 输入配对码（`/claim`），后端为该用户创建 Device，此时 KeyHash 是 `pending-…` 占位；设备带令牌轮询 `/poll`，被认领后**这时才生成密钥**，只返回一次，库里只存哈希。
+- **原因**：设备离开局域网后，复制密钥再重新烧录不现实。
+- **安全**：只知道配对码拿不到密钥（还需要令牌）；码 10 分钟过期；每个用户每小时最多输错 10 次，每个 IP 每 10 分钟最多申请 10 次（IMemoryCache，单副本够用）；明文密钥只在最后一次响应里出现。
+- **保留**：手动生成密钥（"No screen? Create a key manually"）作为没有屏幕的设备或脚本的备用方式。
+- **设备端**：上传返回 401 → 清除密钥，回到配对界面（网页上移除设备后的自动处理）。
+
+### D-16 手机配网用热点 + 强制门户，保存多个网络（2026-11-19）
+- **决定**：没有可用网络时，Stack-chan 开热点 `StackChan-XXXX`，用**每次随机生成的 8 位密码**（WPA2），二维码 `WIFI:T:WPA;S:…;P:…;;` 里带着密码，扫码即可连上；手机会弹出设备自己提供的网页，列出**设备扫描到的** 2.4GHz 网络，输入密码后先测试能连上，成功后才保存。NVS（`net` 命名空间）最多保存 5 个网络，最近添加的排在前面；开机扫描后按信号从强到弱依次尝试已知网络；断线后在后台异步扫描再重连（不阻塞界面）。
+- **原因**：Wi-Fi 不能再写死在固件里；手机比 320×240 的屏幕更适合输入密码。用随机密码而不是开放热点，防止旁边的人趁配网时连进来改配置，体验上一样是扫码。
+- **入口**：首次开机（没有已保存的网络）自动进入；之后从设置 → Wi-Fi、配对界面的 Wi-Fi 按钮进入。设置界面的 Reset（点两次）会清除所有网络和设备密钥（恢复出厂）。
+- **兼容**：`secrets.h` 变为可选；其中的 `WIFI_*` / `DEVICE_KEY` 只在 NVS 为空的首次开机时导入一次。
+
+### D-14 部署工作流暂时只能手动触发（2026-11-18，部分已完成）
+- **决定**：`deploy.yml` 只保留 `workflow_dispatch`。
+- **原因**：最初镜像名和应用名都指向 Phase 2，自动部署会覆盖线上服务。现在已改为 `healthtrack-*`，并且首次部署已成功。
+- **待办**：恢复 `workflow_run`（CI 通过后自动部署）。
+
+---
+
+## 7. 开发节点
+
+| 日期 | 节点 |
+|---|---|
+| 2026-11-18 | 从 Phase 2 复制出新仓库；部署改为仅手动触发 |
+| 2026-11-18 | 后端：设备配对、上传接口、Claude 识别、迁移 `AddDevicesAndIntake`、17 个测试；前端 Food Log 页 |
+| 2026-11-18 | 改为"先只传照片 + 重量"，端到端测试通过（照片字节一致，无 token 返回 401） |
+| 2026-11-18 | 首个固件烧录到 Stack-chan；修复屏幕旋转；真机通过局域网上传了第一批照片 |
+| 2026-11-18 | 秤热插拔、离线容错、Wi-Fi 兜底重连 |
+| 2026-11-18 | 全幅预览布局、TARE、零点跟踪；I2C 交还 → 触摸可用 |
+| 2026-11-18 | 舵机控制、设置页（亮度/Home/关机）、摇杆对准 |
+| 2026-11-18 | 首批 5 个提交，PR #1 创建 |
+| 2026-11-18 | 接入 Anthropic Key，网图测试识别准确；改用 Haiku；真机放鼠标正确判为非食物 |
+| 2026-11-19 | Azure 单独部署：Neon 新库、两个 Container App、GitHub Secrets；PR #1 合并（`192148d`），Deploy 成功 |
+| 2026-11-19 | Stack-chan 改连线上 HTTPS 后端，重新烧录 |
+| 2026-11-19 | 新建 AGENTS.md |
+| 2026-11-19 | 分支 `feature/device-setup`：配对码接口 + 迁移 `AddDevicePairing` + 9 个测试（共 112 个）；网页"Add device"输入配对码；固件手机配网、多网络保存、配对界面、401 回到配对；已烧录，旧配置自动导入 NVS |
+
+---
+
+## 8. 踩过的坑
+
+- **Azure "另存为新修订"是基于所选版本生成的**：在缩放页基于 `--0000001`（没有环境变量）保存，新版本拿走了 100% 流量，于是连到默认的 `localhost/healthtracker` 而崩溃（退出码 139）。改配置前一定要确认"基于修订"选的是最新的正确版本。**改机密不会产生新版本**，需要重启或新建版本才会生效。
+- **连接串格式**：Npgsql 不认 `postgresql://` 这种网址格式，要用 `Host=…;Database=…;Username=…;Password=…;SSL Mode=Require`。
+- **容器一启动就崩溃时**，实时日志流连不上（没有副本）；去"监视 → 日志"用 KQL 查 `ContainerAppConsoleLogs_CL`。
+- **PY32 IO 扩展芯片在 400kHz 下**能响应地址扫描，但读寄存器返回 0；改 100kHz（和官方一致）。
+- **刚上电的舵机**需要几百毫秒才响应 Ping；开机重试，加上 30 秒内的后台重试。
+- **Arduino 的 `degrees` 是宏**，不能用作函数名。
+- **FTServo 用的是 IDF 5 的 `UART_SCLK_DEFAULT`**；Arduino-ESP32 2.x 是 IDF 4.4，要用 `UART_SCLK_APB`。
+- **Wi-Fi 库自带的自动重连**对 `ASSOC_LEAVE` 等原因不会重试；需要自己的看门狗（每 20 秒）。
+- **C 盘满导致工具链安装失败**；PlatformIO 用 `PLATFORMIO_CORE_DIR='E:\.platformio'`。
+- **`| tail` 会吞掉退出码**：编译看起来成功，实际失败了；要用 grep 查 SUCCESS/FAILED。
+- **Wikimedia `Special:FilePath`** 对不存在的文件返回 404 HTML，频繁请求返回 429；下载后要检查 content-type。
+- **固件工具链默认 C++11**：lambda 参数不能写 `auto`。
+- **EF Core 的 `ExecuteDeleteAsync`** 内存测试库不支持；需要在测试里跑到的代码改用加载后 `RemoveRange`。
+
+---
+
+## 9. 待办 / 未决
+
+- [ ] 用 Stack-chan **实拍真实食物**测试识别效果（目前只测过网图和非食物）
+- [ ] 相机对准：秤放在 Stack-chan 前方 20–30cm，用摇杆调整
+- [ ] 恢复 CI 通过后自动部署（D-14）
+- [x] 手机配网（D-16）、配对码（D-15）—— 待部署后在真机上验证配对流程
+- [ ] HTTPS 证书校验（目前 `setInsecure()`，见 `beginHttp` 的 TODO）
+- [ ] 上传失败暂存 + 补传（带实际称重时间）
+- [ ] OTA 固件升级；时区跟随账号设置；网页显示设备状态（版本、电量、信号）
+- [ ] Stack-chan 处的 2.4GHz 信号很弱（−70～−76dBm）
+- [ ] 后端最小副本 0 → 冷启动 20–30 秒，可能导致长时间闲置后的第一次上传超时；决定是否改为 1
+- [ ] 舵机堵转保护（官方固件有）
+- [ ] 与现有功能联动：Dashboard 摄入/净热量、AI 助手读取摄入数据、积分（用户说暂缓）
+- [ ] README 补充智能秤功能说明
+- [ ] 识别失败（或误判为非食物）的照片是否要保留供人工确认
