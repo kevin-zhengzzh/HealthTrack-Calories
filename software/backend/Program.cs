@@ -59,6 +59,8 @@ builder.Services.AddScoped<ChatToolExecutor>();
 builder.Services.AddScoped<ChatAssistantService>();
 builder.Services.AddScoped<WeeklySummaryService>();
 builder.Services.AddSingleton(TimeProvider.System);
+// Rate-limit counters for device pairing (single replica, so in-memory is enough)
+builder.Services.AddMemoryCache();
 // Business code asks for IChatModel and gets the provider wrapped in the
 // usage-tracking decorator.
 builder.Services.AddScoped<IChatModel>(sp => new UsageTrackingChatModel(

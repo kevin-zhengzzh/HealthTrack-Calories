@@ -266,5 +266,10 @@ export const getDevices = () => request<Device[]>('/device')
 export const createDevice = (name: string) =>
   request<CreatedDevice>('/device', { method: 'POST', body: JSON.stringify({ name }) })
 
+// Pair with the 6-digit code shown on the device's screen; the device then
+// collects its key by itself
+export const claimPairingCode = (code: string, name?: string) =>
+  request<Device>('/device/pairing/claim', { method: 'POST', body: JSON.stringify({ code, name: name || null }) })
+
 export const revokeDevice = (id: number) =>
   request<void>(`/device/${id}`, { method: 'DELETE' })

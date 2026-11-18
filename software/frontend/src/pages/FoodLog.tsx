@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
-import { createDevice, deleteIntake, fetchIntakeImageUrl, getDevices, getIntakeHistory, revokeDevice, updateIntake } from '../api'
+import { claimPairingCode, createDevice, deleteIntake, fetchIntakeImageUrl, getDevices, getIntakeHistory, revokeDevice, updateIntake } from '../api'
 import { useStore } from '../store'
 import { useLockBodyScroll } from '../hooks/useLockBodyScroll'
 import type { CreatedDevice, Device, IntakeRecord } from '../types'
@@ -94,6 +94,10 @@ export default function FoodLog() {
   const [viewingPhoto, setViewingPhoto] = useState<string | null>(null)
 
   const [pairing, setPairing] = useState(false)
+  // 'code': enter the code shown on the device (normal); 'key': create a key
+  // by hand, for devices without a screen or for scripts
+  const [pairMode, setPairMode] = useState<'code' | 'key'>('code')
+  const [pairCode, setPairCode] = useState('')
   const [deviceName, setDeviceName] = useState('Stack-chan')
   const [newDevice, setNewDevice] = useState<CreatedDevice | null>(null)
   const [confirmRevoke, setConfirmRevoke] = useState<Device | null>(null)
@@ -171,12 +175,36 @@ export default function FoodLog() {
     }
   }
 
+  function openPairing() {
+    setPairMode('code')
+    setPairCode('')
+    setPairing(true)
+  }
+
+  async function doClaim() {
+    const digits = pairCode.replace(/\D/g, '')
+    if (digits.length !== 6) return pushToast('Enter the 6-digit code shown on the device.')
+    setBusy(true)
+    try {
+      const device = await claimPairingCode(digits, deviceName.trim())
+      setDevices((ds) => [...ds, device])
+      setPairing(false)
+      pushToast(`${device.name} paired — it will finish setting up by itself.`, 'success')
+      // The device collects its key within a few seconds; refresh to show it connected
+      setTimeout(() => { getDevices().then(setDevices).catch(console.error) }, 8000)
+    } catch (err: unknown) {
+      pushToast(err instanceof Error ? err.message : 'Failed to pair device')
+    } finally {
+      setBusy(false)
+    }
+  }
+
   async function doPair() {
     if (!deviceName.trim()) return pushToast('Enter a device name.')
     setBusy(true)
     try {
       const created = await createDevice(deviceName.trim())
-      setDevices((ds) => [...ds, { id: created.id, name: created.name, keyPrefix: created.keyPrefix, createdAt: created.createdAt, lastSeenAt: null }])
+      setDevices((ds) => [...ds, { id: created.id, name: created.name, keyPrefix: created.keyPrefix, createdAt: created.createdAt, lastSeenAt: null, awaitingDevice: false }])
       setPairing(false)
       setNewDevice(created)
     } catch (err: unknown) {
@@ -287,14 +315,14 @@ export default function FoodLog() {
       <section className="bg-[var(--bg-surface)] rounded-2xl shadow p-5">
         <div className="flex items-center justify-between mb-3">
           <h2 className="text-lg font-semibold text-[var(--text-primary)]">Devices</h2>
-          <button type="button" onClick={() => setPairing(true)}
+          <button type="button" onClick={openPairing}
             className="text-sm font-semibold px-3 py-1.5 rounded-lg cursor-pointer"
             style={{ backgroundColor: 'var(--primary-light)', color: 'var(--primary-text)' }}>
-            Pair device
+            Add device
           </button>
         </div>
         {devices.length === 0 ? (
-          <p className="text-sm text-[var(--text-muted)]">No devices paired. Pairing creates a key you put into the scale's firmware.</p>
+          <p className="text-sm text-[var(--text-muted)]">No devices yet. Turn on your Stack-chan, connect it to Wi-Fi, and enter the code it shows here.</p>
         ) : (
           <ul className="flex flex-col divide-y divide-[var(--border)]">
             {devices.map((d) => (
@@ -302,7 +330,9 @@ export default function FoodLog() {
                 <div className="min-w-0">
                   <p className="font-medium text-[var(--text-primary)] truncate">{d.name}</p>
                   <p className="text-xs text-[var(--text-muted)]">
-                    <code>{d.keyPrefix}…</code> · {d.lastSeenAt ? `last upload ${new Date(d.lastSeenAt).toLocaleString()}` : 'never used'}
+                    {d.awaitingDevice
+                      ? 'Waiting for the device to connect…'
+                      : <><code>{d.keyPrefix}…</code> · {d.lastSeenAt ? `last seen ${new Date(d.lastSeenAt).toLocaleString()}` : 'never used'}</>}
                   </p>
                 </div>
                 <button type="button" onClick={() => setConfirmRevoke(d)}
@@ -368,17 +398,49 @@ export default function FoodLog() {
 
       {pairing && (
         <Modal onClose={() => setPairing(false)}>
-          <h2 className="text-xl font-bold text-[var(--text-primary)] mb-4">Pair a device</h2>
-          <label className="flex flex-col gap-1 text-sm text-[var(--text-secondary)] mb-4">
-            Device name
-            <input type="text" maxLength={40} value={deviceName} onChange={(e) => setDeviceName(e.target.value)} className={inputClass} />
-          </label>
-          <div className="flex gap-3">
-            <button type="button" onClick={() => setPairing(false)} className={secondaryBtn}>Cancel</button>
-            <button type="button" onClick={doPair} disabled={busy} className={primaryBtn} style={{ backgroundColor: 'var(--primary)' }}>
-              {busy ? 'Creating…' : 'Create key'}
-            </button>
-          </div>
+          {pairMode === 'code' ? (
+            <>
+              <h2 className="text-xl font-bold text-[var(--text-primary)] mb-2">Add a device</h2>
+              <p className="text-sm text-[var(--text-secondary)] mb-4">Enter the 6-digit code shown on the device's screen.</p>
+              <label className="flex flex-col gap-1 text-sm text-[var(--text-secondary)] mb-3">
+                Pairing code
+                <input type="text" inputMode="numeric" autoComplete="one-time-code" autoFocus maxLength={7}
+                  placeholder="123 456" value={pairCode}
+                  onChange={(e) => setPairCode(e.target.value)}
+                  onKeyDown={(e) => { if (e.key === 'Enter') doClaim() }}
+                  className={`${inputClass} text-2xl tracking-[0.3em] text-center tabular-nums`} />
+              </label>
+              <label className="flex flex-col gap-1 text-sm text-[var(--text-secondary)] mb-4">
+                Name (optional)
+                <input type="text" maxLength={40} value={deviceName} onChange={(e) => setDeviceName(e.target.value)} className={inputClass} />
+              </label>
+              <div className="flex gap-3">
+                <button type="button" onClick={() => setPairing(false)} className={secondaryBtn}>Cancel</button>
+                <button type="button" onClick={doClaim} disabled={busy} className={primaryBtn} style={{ backgroundColor: 'var(--primary)' }}>
+                  {busy ? 'Pairing…' : 'Pair'}
+                </button>
+              </div>
+              <button type="button" onClick={() => setPairMode('key')}
+                className="mt-4 text-xs text-[var(--text-muted)] hover:underline cursor-pointer">
+                No screen on the device? Create a key manually
+              </button>
+            </>
+          ) : (
+            <>
+              <h2 className="text-xl font-bold text-[var(--text-primary)] mb-2">Create a device key</h2>
+              <p className="text-sm text-[var(--text-secondary)] mb-4">For devices you configure by hand (firmware secrets or scripts).</p>
+              <label className="flex flex-col gap-1 text-sm text-[var(--text-secondary)] mb-4">
+                Device name
+                <input type="text" maxLength={40} value={deviceName} onChange={(e) => setDeviceName(e.target.value)} className={inputClass} />
+              </label>
+              <div className="flex gap-3">
+                <button type="button" onClick={() => setPairMode('code')} className={secondaryBtn}>Back</button>
+                <button type="button" onClick={doPair} disabled={busy} className={primaryBtn} style={{ backgroundColor: 'var(--primary)' }}>
+                  {busy ? 'Creating…' : 'Create key'}
+                </button>
+              </div>
+            </>
+          )}
         </Modal>
       )}
 

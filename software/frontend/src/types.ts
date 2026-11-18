@@ -167,6 +167,8 @@ export interface Device {
   keyPrefix: string
   createdAt: string
   lastSeenAt: string | null
+  // Claimed with a pairing code, but the device hasn't collected its key yet
+  awaitingDevice: boolean
 }
 
 // Returned once at pairing time; the server only keeps the key's hash

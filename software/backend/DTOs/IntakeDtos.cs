@@ -5,7 +5,17 @@ public record CreateDeviceRequest(string Name);
 // Key is returned only here, once — the server keeps just its hash
 public record CreateDeviceResult(int Id, string Name, string KeyPrefix, string Key, DateTime CreatedAt);
 
-public record DeviceDto(int Id, string Name, string KeyPrefix, DateTime CreatedAt, DateTime? LastSeenAt);
+// AwaitingDevice: claimed with a pairing code, but the device hasn't
+// collected its key yet (it is offline or the pairing expired)
+public record DeviceDto(int Id, string Name, string KeyPrefix, DateTime CreatedAt, DateTime? LastSeenAt, bool AwaitingDevice);
+
+// Pairing-code flow (device ⇄ backend ⇄ website)
+public record PairingStartRequest(string? Name);
+public record PairingStartResult(string Code, string PairingToken, DateTime ExpiresAt, int PollSeconds);
+public record PairingClaimRequest(string Code, string? Name);
+public record PairingPollRequest(string PairingToken);
+// Status: "pending" | "paired" (Key set, returned once) | "expired"
+public record PairingPollResult(string Status, string? Key, string? DeviceName);
 
 public record IntakeRecordDto(
     int Id,
