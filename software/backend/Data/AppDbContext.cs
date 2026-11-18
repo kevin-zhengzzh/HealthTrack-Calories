@@ -15,6 +15,8 @@ public class AppDbContext : DbContext
     public DbSet<PointTransaction> PointTransactions { get; set; }
     public DbSet<AiUsageLog> AiUsageLogs { get; set; }
     public DbSet<WeeklySummary> WeeklySummaries { get; set; }
+    public DbSet<Device> Devices { get; set; }
+    public DbSet<IntakeRecord> IntakeRecords { get; set; }
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -42,6 +44,18 @@ public class AppDbContext : DbContext
         // One cached summary per user, week and language — also the cache lookup key
         modelBuilder.Entity<WeeklySummary>()
             .HasIndex(s => new { s.UserId, s.WeekStart, s.Language }).IsUnique();
+
+        // Every device upload looks its key up by hash
+        modelBuilder.Entity<Device>()
+            .HasIndex(d => d.KeyHash).IsUnique();
+
+        // Food log is listed per user and totalled per day
+        modelBuilder.Entity<IntakeRecord>()
+            .HasIndex(r => new { r.UserId, r.Date });
+        // Deleting a device keeps the meals it logged
+        modelBuilder.Entity<IntakeRecord>()
+            .HasOne<Device>().WithMany().HasForeignKey(r => r.DeviceId)
+            .OnDelete(DeleteBehavior.SetNull);
 
         // UserSkin uses composite primary key
         modelBuilder.Entity<UserSkin>()

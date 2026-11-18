@@ -3,6 +3,7 @@ using backend.Data;
 using backend.DTOs;
 using backend.Services;
 using backend.Services.Ai;
+using backend.Services.Food;
 using backend.Validators;
 using FluentValidation;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
@@ -64,6 +65,11 @@ builder.Services.AddScoped<IChatModel>(sp => new UsageTrackingChatModel(
     sp.GetRequiredService<DeepSeekChatModel>(),
     sp.GetRequiredService<AiUsageTracker>(),
     sp.GetRequiredService<ILogger<UsageTrackingChatModel>>()));
+
+// Food recognition for camera + scale devices (Claude vision). Like DeepSeek,
+// the key is optional at startup; uploads report "unavailable" without it.
+builder.Services.Configure<AnthropicOptions>(builder.Configuration.GetSection("Anthropic"));
+builder.Services.AddSingleton<IFoodRecognizer, ClaudeFoodRecognizer>();
 
 // FluentValidation
 builder.Services.AddScoped<IValidator<RegisterRequest>, RegisterRequestValidator>();
