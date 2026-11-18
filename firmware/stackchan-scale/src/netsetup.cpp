@@ -88,6 +88,13 @@ void join(const String& ssid, const String& pass) {
     WiFi.begin(ssid.c_str(), pass.c_str());
 }
 
+bool paused = false;
+
+// On-device scan results
+bool uiScanRunning = false;
+std::vector<Network> uiResults;
+uint32_t joinStartedAt = 0;
+
 // ---- Portal ----
 
 DNSServer dns;
@@ -271,8 +278,74 @@ bool connectBest(uint32_t timeoutMs) {
     return false;
 }
 
+void startScan() {
+    scanning = false;  // the watchdog's own scan, if any, is abandoned
+    // A connection attempt in progress makes the scan fail; stop it (an
+    // existing connection is kept, so switching networks still works)
+    if (WiFi.status() != WL_CONNECTED) WiFi.disconnect(false);
+    WiFi.scanDelete();
+    uiResults.clear();
+    uiScanRunning = WiFi.scanNetworks(true) == WIFI_SCAN_RUNNING;
+}
+
+bool scanDone() {
+    if (!uiScanRunning) return true;
+    int n = WiFi.scanComplete();
+    if (n == WIFI_SCAN_RUNNING) return false;
+    uiScanRunning = false;
+    for (int i = 0; i < n; i++) {
+        String s = WiFi.SSID(i);
+        if (!s.length()) continue;
+        bool dup = false;
+        for (auto& x : uiResults) if (x.ssid == s) { x.rssi = max(x.rssi, (int)WiFi.RSSI(i)); dup = true; }
+        if (!dup) uiResults.push_back({s, WiFi.RSSI(i), WiFi.encryptionType(i) == WIFI_AUTH_OPEN, findSaved(s) != nullptr});
+    }
+    WiFi.scanDelete();
+    std::sort(uiResults.begin(), uiResults.end(), [](const Network& a, const Network& b) { return a.rssi > b.rssi; });
+    if (uiResults.size() > 20) uiResults.resize(20);
+    return true;
+}
+
+std::vector<Network> scanResults() { return uiResults; }
+
+String savedPassword(const String& ssid) {
+    const Saved* s = findSaved(ssid);
+    return s ? s->pass : String();
+}
+
+void pause(bool p) {
+    paused = p;
+    if (p) scanning = false;
+    lastTry = millis();
+}
+
+void tryJoin(const String& ssid, const String& pass) {
+    lastReason = 0;
+    lastReasonAt = 0;
+    joinStartedAt = millis();
+    join(ssid, pass);
+}
+
+JoinState joinState(uint32_t timeoutMs) {
+    if (WiFi.status() == WL_CONNECTED) return JoinState::Connected;
+    uint32_t elapsed = millis() - joinStartedAt;
+    if (lastReasonAt >= joinStartedAt && lastReasonAt) {
+        switch (lastReason) {
+            case WIFI_REASON_AUTH_FAIL:
+            case WIFI_REASON_4WAY_HANDSHAKE_TIMEOUT:
+            case WIFI_REASON_HANDSHAKE_TIMEOUT:
+            case WIFI_REASON_MIC_FAILURE:
+                return JoinState::WrongPassword;
+            case WIFI_REASON_NO_AP_FOUND:
+                if (elapsed > 6000) return JoinState::NotFound;
+                break;
+        }
+    }
+    return elapsed > timeoutMs ? JoinState::Failed : JoinState::Trying;
+}
+
 void maintain() {
-    if (active || saved.empty() || WiFi.status() == WL_CONNECTED) {
+    if (paused || active || saved.empty() || WiFi.status() == WL_CONNECTED) {
         scanning = false;
         return;
     }
