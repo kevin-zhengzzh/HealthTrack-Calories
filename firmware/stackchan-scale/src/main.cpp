@@ -490,11 +490,11 @@ static void drawScreen() {
             else if (millis() - zeroedAt < 1500)
                 drawMessage("Zeroed", TFT_GREEN, "Put food on the plate");
             else if (steady && !online)
-                drawMessage("No Wi-Fi", TFT_ORANGE, "Will upload when connected");
+                drawMessage("Waiting for Wi-Fi", TFT_ORANGE, net::statusText());
             else if (state == State::Settling)
                 drawMessage("Hold still...", TFT_WHITE, "Taking photo when steady");
             else
-                drawMessage("Ready", TFT_WHITE, online ? "Put food on the plate" : "Offline: weighing only");
+                drawMessage("Ready", TFT_WHITE, online ? "Put food on the plate" : net::statusText());
             if (state == State::Settling) {
                 // Progress bar towards the photo, along the bottom of the image
                 uint32_t t = min<uint32_t>(millis() - settleSince, STABLE_MS);
@@ -842,11 +842,10 @@ static void drawSetupScreen() {
     canvas.drawString("pw " + net::apPassword(), x, 148);
 
     // Status of the attempt started from the phone
-    auto st = net::portalState();
-    uint16_t c = st == net::PortalState::Connected ? TFT_GREEN
-               : st == net::PortalState::Failed ? TFT_RED : TFT_YELLOW;
-    String m = net::portalMessage();
-    if (m.isEmpty()) m = net::savedCount() ? "Saved: " + net::savedSsid(0) : "No Wi-Fi saved yet";
+    bool justSaved = net::portalState() == net::PortalState::Saved;
+    uint16_t c = justSaved ? TFT_GREEN : TFT_YELLOW;
+    String m = justSaved ? net::portalMessage()
+             : net::savedCount() ? "Saved: " + net::savedSsid(0) : "No Wi-Fi saved yet";
     canvas.setTextColor(c);
     canvas.setFont(&fonts::Font2);
     canvas.drawString(m.substring(0, 18), 8, LCD_H - 46);
@@ -889,7 +888,9 @@ static void drawPairingScreen() {
         canvas.drawString("No Wi-Fi", LCD_W / 2, 90);
         canvas.setFont(&fonts::Font2);
         canvas.setTextColor(TFT_WHITE);
-        canvas.drawString(net::savedCount() ? "Trying saved networks..." : "Tap Wi-Fi to set it up", LCD_W / 2, 124);
+        canvas.drawString(net::statusText(), LCD_W / 2, 124);
+        canvas.setTextColor(TFT_LIGHTGREY);
+        canvas.drawString("Tap Wi-Fi to change network", LCD_W / 2, 146);
     } else if (pairCode.length() == 6) {
         // "483 920" in big seven-segment digits
         canvas.setFont(&fonts::Font7);
