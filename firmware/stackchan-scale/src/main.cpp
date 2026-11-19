@@ -158,6 +158,14 @@ static Rect accountTagRect = {0, 0, 0, 0};  // where the tag was last drawn (tap
 static bool accountMenuOpen = false;
 static uint32_t unpairArmedUntil = 0;       // Unpair needs a second tap
 
+// Today's intake for the ring on the main screen. Updated by every upload
+// and every account check (boot, touches, every few hours); edits made on
+// the website show up at the next of those.
+static int intakeToday = -1;   // kcal, -1 = not known yet
+static int intakeGoal = 0;     // daily goal in kcal, 0 = none set
+static String intakeDate;      // local day intakeToday belongs to
+static String localDate();
+
 // On-device Wi-Fi setup
 enum class WifiScreen { List, Password, Joining, Phone };
 static WifiScreen wifiScreen = WifiScreen::List;
@@ -513,6 +521,55 @@ static void drawAccountTag() {
     drawFit(label, x + 24, y + h / 2, tw, middle_left);
 }
 
+// Local time (NTP, TIMEZONE) in the image's top-right corner, same style as
+// the account tag. Hidden until the clock has been set.
+static void drawClock() {
+    time_t now = time(nullptr);
+    if (now < 1700000000) return;  // not synced yet
+    struct tm t;
+    localtime_r(&now, &t);
+    char buf[6];
+    strftime(buf, sizeof buf, "%H:%M", &t);
+    canvas.setFont(&fonts::Font2);
+    const int h = 22, w = canvas.textWidth(buf) + 16;
+    Rect r = {PREV_W - 6 - w, 6, w, h};
+    fillRoundRectAlpha(r, h / 2, TFT_BLACK, 150);
+    canvas.setTextColor(TFT_WHITE);
+    canvas.setTextDatum(middle_center);
+    canvas.drawString(buf, r.x + w / 2, r.y + h / 2);
+}
+
+// Today's intake vs the daily goal: a small ring in the image's bottom-right
+// corner, "eaten/goal" in the middle. Green until the goal, then amber.
+static void drawIntakeRing() {
+    if (deviceKey.isEmpty() || intakeToday < 0) return;
+    String today = localDate();
+    int eaten = (!today.isEmpty() && today != intakeDate) ? 0 : intakeToday;  // a new day started
+    const int R = 30, T = 6;
+    const int cx = PREV_W - 6 - R, cy = PREV_H - 6 - R;
+    fillRoundRectAlpha({cx - R, cy - R, 2 * R, 2 * R}, R, TFT_BLACK, 150);
+    canvas.fillArc(cx, cy, R - T - 1, R - 2, 0, 360, 0x4208);
+    if (intakeGoal > 0 && eaten > 0) {
+        bool over = eaten > intakeGoal;
+        uint16_t color = over ? (uint16_t)0xFD20 : (uint16_t)TFT_GREEN;
+        int sweep = over ? 360 : max(4, (int)((long)eaten * 360 / intakeGoal));
+        // Starts at 12 o'clock (270 degrees), clockwise
+        if (sweep <= 90) {
+            canvas.fillArc(cx, cy, R - T - 1, R - 2, 270, 270 + sweep, color);
+        } else {
+            canvas.fillArc(cx, cy, R - T - 1, R - 2, 270, 360, color);
+            canvas.fillArc(cx, cy, R - T - 1, R - 2, 0, sweep - 90, color);
+        }
+    }
+    canvas.setTextDatum(middle_center);
+    canvas.setFont(&fonts::Font2);
+    canvas.setTextColor(intakeGoal > 0 && eaten > intakeGoal ? (uint16_t)0xFD20 : (uint16_t)TFT_WHITE);
+    canvas.drawString(String(eaten), cx, cy - 5);
+    canvas.setFont(&fonts::Font0);
+    canvas.setTextColor(TFT_LIGHTGREY);
+    canvas.drawString(intakeGoal > 0 ? "/" + String(intakeGoal) : String("kcal"), cx, cy + 9);
+}
+
 static constexpr Rect ACCOUNT_CARD = {14, 34, PREV_W - 28, 116};
 static constexpr Rect BTN_UNPAIR = {ACCOUNT_CARD.x + 10, ACCOUNT_CARD.y + ACCOUNT_CARD.h - 44,
                                     (ACCOUNT_CARD.w - 30) / 2, 34};
@@ -618,6 +675,8 @@ static void drawScreen() {
         canvas.fillRect(0, 0, PREV_W, PREV_H, TFT_BLACK);
     }
     drawAccountTag();
+    drawClock();
+    drawIntakeRing();
 
     bool online = WiFi.status() == WL_CONNECTED;
     switch (state) {
@@ -962,6 +1021,8 @@ static void clearDeviceKey() {
     p.end();
     deviceKey = "";
     ownerName = "";
+    intakeToday = -1;
+    intakeGoal = 0;
     Serial.println("Device key cleared");
 }
 
@@ -973,33 +1034,45 @@ static void clearDeviceKey() {
 // Not a frequent heartbeat: every request wakes the backend and database,
 // which then stay billed for several minutes.
 static constexpr uint32_t ACCOUNT_CHECK_MS = 6UL * 60 * 60 * 1000;  // when idle
-static constexpr uint32_t ACCOUNT_RECHECK_MIN_MS = 60 * 1000;        // on opening settings
+static constexpr uint32_t ACCOUNT_RECHECK_MIN_MS = 60 * 1000;        // on a touch, at most this often
 static volatile bool accountCheckBusy = false;
 static volatile int accountCheckResult = 0;  // HTTP status of a finished check, 0 = none
 static String accountCheckUser;              // set by the task before accountCheckResult
+static int accountCheckToday = 0, accountCheckGoal = 0;
+static String accountCheckDate;
 static bool accountChecked = false;
 static uint32_t lastAccountCheck = 0;
 
 static void accountCheckTask(void* arg) {
     String* key = (String*)arg;
     String user;
+    String date = localDate();
+    int today = 0, goal = 0;
     int code = -1;
     {
         HTTPClient http;
         WiFiClient plain;
         WiFiClientSecure secure;
-        if (beginHttp(http, plain, secure, String(API_BASE_URL) + "/api/device/me")) {
+        String url = String(API_BASE_URL) + "/api/device/me";
+        if (!date.isEmpty()) url += "?localDate=" + date;
+        if (beginHttp(http, plain, secure, url)) {
             http.setTimeout(HTTP_TIMEOUT);
             http.addHeader("X-Device-Key", *key);
             code = http.GET();
             JsonDocument doc;
-            if (code == 200 && !deserializeJson(doc, http.getString()))
+            if (code == 200 && !deserializeJson(doc, http.getString())) {
                 user = (const char*)(doc["username"] | "");
+                today = doc["todayCalories"] | 0;
+                goal = doc["dailyGoal"] | 0;
+            }
             http.end();
         }
     }
     delete key;
     accountCheckUser = user;
+    accountCheckToday = today;
+    accountCheckGoal = goal;
+    accountCheckDate = date;
     accountCheckResult = code == 0 ? -1 : code;
     accountCheckBusy = false;
     vTaskDelete(nullptr);
@@ -1058,9 +1131,12 @@ static void accountLoop() {
     if (code != 0) {
         accountCheckResult = 0;
         Serial.printf("Account check: %d '%s'\n", code, accountCheckUser.c_str());
-        if (code == 200 && !accountCheckUser.isEmpty() && accountCheckUser != ownerName)
-            saveOwnerName(accountCheckUser);
-        else if (code == 401 && !deviceKey.isEmpty())
+        if (code == 200 && !deviceKey.isEmpty()) {
+            if (!accountCheckUser.isEmpty() && accountCheckUser != ownerName) saveOwnerName(accountCheckUser);
+            intakeToday = accountCheckToday;
+            intakeGoal = accountCheckGoal;
+            intakeDate = accountCheckDate;
+        } else if (code == 401 && !deviceKey.isEmpty())
             clearDeviceKey();  // removed on the website: the loop switches to pairing
     }
     // Once after boot, then every few hours
@@ -1798,6 +1874,9 @@ static bool upload(const uint8_t* jpg, size_t jpgLen, float grams, String& outLi
         const char* food = doc["foodName"] | "";
         int kcal = doc["calories"] | 0;
         int today = doc["todayCalories"] | 0;
+        intakeToday = today;
+        intakeGoal = doc["dailyGoal"] | 0;
+        intakeDate = date;
         if (!(doc["isFood"] | true)) {
             outLine1 = "No food seen";
             outLine2 = "Nothing was logged";
@@ -2018,6 +2097,11 @@ void loop() {
         tapNow = false;  // same for the tap (if any) that ended pairing
     }
 
+    // Someone is using the device: a good moment to notice it was removed on
+    // the website (a 401 sends it to the pairing screen). Costs nothing while
+    // nobody touches it.
+    if (tapNow && millis() - lastAccountCheck >= ACCOUNT_RECHECK_MIN_MS) startAccountCheck();
+
     if (accountMenuOpen) {
         if (tapNow) {
             if (tapped(BTN_UNPAIR)) {
@@ -2038,7 +2122,6 @@ void loop() {
         unpairArmedUntil = 0;
         if (aimVisible) hideAim();
         if (state == State::Settling) state = State::Idle;  // no photos while it's open
-        if (ownerName.isEmpty() && millis() - lastAccountCheck >= ACCOUNT_RECHECK_MIN_MS) startAccountCheck();
     } else if (settingsOpen) {
         handleSettingsTap();
         if (mode == Mode::WifiSetup) return;  // Wi-Fi button: draw its screen next loop
@@ -2049,7 +2132,6 @@ void loop() {
             settingsOpen = true;
             powerArmedUntil = 0;
             unpairArmedUntil = 0;
-            if (millis() - lastAccountCheck >= ACCOUNT_RECHECK_MIN_MS) startAccountCheck();
             if (state == State::Settling) state = State::Idle;  // no photos while adjusting
         } else if (scaleOk && tapped({TARE_X, TARE_Y, TARE_W, TARE_H})) {
             Serial.println("TARE tapped");

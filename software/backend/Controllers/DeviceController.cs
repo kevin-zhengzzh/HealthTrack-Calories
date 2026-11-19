@@ -41,7 +41,8 @@ public class DeviceController : ControllerBase
     // account it logs to — and, via 401, that it was removed on the website
     [HttpGet("me")]
     [AllowAnonymous]
-    public async Task<IActionResult> Me([FromHeader(Name = DeviceKeys.HeaderName)] string? deviceKey)
+    public async Task<IActionResult> Me([FromHeader(Name = DeviceKeys.HeaderName)] string? deviceKey,
+        [FromQuery] string? localDate = null)
     {
         if (string.IsNullOrWhiteSpace(deviceKey))
             return Unauthorized(new { message = "Missing device key." });
@@ -53,8 +54,10 @@ public class DeviceController : ControllerBase
 
         device.LastSeenAt = DateTime.UtcNow;
         await _db.SaveChangesAsync();
-        var username = await _db.Users.Where(u => u.Id == device.UserId).Select(u => u.Username).FirstAsync();
-        return Ok(new DeviceSelfDto(device.Name, username));
+        var user = await _db.Users.Where(u => u.Id == device.UserId)
+            .Select(u => new { u.Username, u.DailyIntakeGoal }).FirstAsync();
+        var today = await IntakeController.TodayTotal(_db, device.UserId, CheckInController.ResolveToday(localDate), default);
+        return Ok(new DeviceSelfDto(device.Name, user.Username, today, user.DailyIntakeGoal));
     }
 
     // Unpair from the device itself: revokes its own key, so the website no

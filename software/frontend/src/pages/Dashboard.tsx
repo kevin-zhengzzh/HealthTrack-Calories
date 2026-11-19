@@ -7,6 +7,7 @@ import CalorieBarChart from '../components/CalorieBarChart'
 import WeeklyGoalDonut from '../components/WeeklyGoalDonut'
 import CheckInHeatmap from '../components/CheckInHeatmap'
 import WeeklySummaryCard from '../components/WeeklySummaryCard'
+import TodayIntakeCard from '../components/TodayIntakeCard'
 import { useLockBodyScroll } from '../hooks/useLockBodyScroll'
 
 // Ticks every second so the header clock stays live while the page is open.
@@ -113,6 +114,8 @@ export default function Dashboard() {
       </div>
 
       <WeeklySummaryCard />
+
+      <TodayIntakeCard />
 
       {/*
         A true 2x2 grid (not two independent columns) so row 2 — the weekly

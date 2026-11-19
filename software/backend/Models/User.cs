@@ -21,6 +21,10 @@ public class User
     // User-configurable target for the weekly calorie chart
     public int WeeklyCalorieGoal { get; set; } = 2000;
 
+    // Daily food intake target (kcal), set on the Food Log page. Null = not set.
+    // One value, not one per day: it carries over to later days until changed.
+    public int? DailyIntakeGoal { get; set; }
+
     // Equipped skin (null = default green theme)
     public int? EquippedSkinId { get; set; }
 
