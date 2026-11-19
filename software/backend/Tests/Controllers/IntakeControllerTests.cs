@@ -282,7 +282,7 @@ public class IntakeControllerTests
     }
 
     [Fact]
-    public async Task DeviceToday_ListsOnlyTodaysMealsOfTheDevicesAccount_OldestFirst()
+    public async Task DeviceToday_ListsOnlyTodaysMealsOfTheDevicesAccount_NewestFirst()
     {
         using var db = NewDb();
         AddMeals(db);
@@ -291,8 +291,8 @@ public class IntakeControllerTests
 
         Assert.Equal(340, today.TodayCalories);
         Assert.Equal(1700, today.DailyGoal);
-        Assert.Equal([10, 11], today.Meals.Select(m => m.Id));
-        Assert.True(today.Meals[0].CreatedAtUnix < today.Meals[1].CreatedAtUnix);
+        Assert.Equal([11, 10], today.Meals.Select(m => m.Id));
+        Assert.True(today.Meals[0].CreatedAtUnix > today.Meals[1].CreatedAtUnix);
     }
 
     [Fact]

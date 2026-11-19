@@ -1190,6 +1190,10 @@ static volatile int todayResult = 0;    // HTTP status of a finished request, 0 
 static String todayBody;                // response, set before todayResult
 static String todayReqDate;             // local day the request was made for
 static int todayScroll = 0, todaySel = -1;
+// While the page is open it reloads every few seconds, so changes made on the
+// website show up; left alone it closes itself (and stops asking).
+static constexpr uint32_t TODAY_REFRESH_MS = 10 * 1000, TODAY_IDLE_CLOSE_MS = 3UL * 60 * 1000;
+static uint32_t todayLastRequest = 0, todayLastTouch = 0;
 static uint32_t deleteArmedUntil = 0;
 static bool todayTouching = false, todayDragged = false;
 static int todayStartX = 0, todayStartY = 0, todayStartScroll = 0;
@@ -1237,6 +1241,7 @@ static void openToday() {
     todayWantDelete = 0;
     deleteArmedUntil = 0;
     todayTouching = false;
+    todayLastTouch = millis();
     if (aimVisible) hideAim();
     if (state == State::Settling) state = State::Idle;  // no photos while it's open
 }
@@ -1250,6 +1255,7 @@ static void applyToday(const String& body, const String& date) {
     intakeToday = doc["todayCalories"] | 0;
     intakeGoal = doc["dailyGoal"] | 0;
     intakeDate = date;
+    int selId = todaySel >= 0 && todaySel < (int)todayMeals.size() ? todayMeals[todaySel].id : 0;
     todayMeals.clear();
     for (JsonObject m : doc["meals"].as<JsonArray>()) {
         String name = (const char*)(m["foodName"] | "");
@@ -1259,6 +1265,10 @@ static void applyToday(const String& body, const String& date) {
     }
     todayLoaded = true;
     todayError = "";
+    todaySel = -1;
+    for (int i = 0; i < (int)todayMeals.size(); i++)
+        if (todayMeals[i].id == selId) todaySel = i;
+    if (todaySel < 0) deleteArmedUntil = 0;
 }
 
 // Top of row i on screen (rows below the opened one move down)
@@ -1294,6 +1304,12 @@ static void todayLoop() {
         }
     }
 
+    if (todayOpen && millis() - todayLastTouch >= TODAY_IDLE_CLOSE_MS) {
+        todayOpen = false;  // nobody's looking
+        return;
+    }
+    if (todayOpen && todayLoaded && !todayTouching && millis() - todayLastRequest >= TODAY_REFRESH_MS)
+        todayWantFetch = true;
     if (!todayOpen || todayBusy || (!todayWantFetch && !todayWantDelete)) return;
     if (WiFi.status() != WL_CONNECTED) {
         todayError = "Offline";
@@ -1313,6 +1329,7 @@ static void todayLoop() {
     todayDeleting = todayWantDelete;
     todayWantDelete = 0;
     todayWantFetch = false;
+    todayLastRequest = millis();
 }
 
 // Delete button in the opened part of a row, on the right
@@ -1426,6 +1443,7 @@ static void drawToday() {
 }
 
 static void handleTodayTap() {
+    if (tapNow || touchHeld) todayLastTouch = millis();
     // List: drag to scroll; a press released without moving is a tap
     if (tapNow && tapY >= TD_ROW_Y && todayLoaded) {
         todayTouching = true;
