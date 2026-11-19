@@ -1041,6 +1041,12 @@ static String accountCheckUser;              // set by the task before accountCh
 static int accountCheckToday = 0, accountCheckGoal = 0;
 static String accountCheckDate;
 static bool accountChecked = false;
+// A check that got no answer (timeout, cold backend, no network) is retried
+// after 2 min, doubling up to 30 min, instead of waiting the full 6 hours.
+// No retry after 200 or 401: those are real answers.
+static constexpr uint32_t ACCOUNT_RETRY_MIN_MS = 2UL * 60 * 1000, ACCOUNT_RETRY_MAX_MS = 30UL * 60 * 1000;
+static uint32_t accountRetryMs = 0;      // current back-off, 0 = no retry pending
+static uint32_t accountRetryFrom = 0;    // when the failed check finished
 static uint32_t lastAccountCheck = 0;
 
 static void accountCheckTask(void* arg) {
@@ -1131,6 +1137,13 @@ static void accountLoop() {
     if (code != 0) {
         accountCheckResult = 0;
         Serial.printf("Account check: %d '%s'\n", code, accountCheckUser.c_str());
+        if (code == 200 || code == 401) {
+            accountRetryMs = 0;
+        } else {
+            accountRetryMs = accountRetryMs ? min(accountRetryMs * 2, ACCOUNT_RETRY_MAX_MS) : ACCOUNT_RETRY_MIN_MS;
+            accountRetryFrom = millis();
+            Serial.printf("Account check: retrying in %lu s\n", (unsigned long)(accountRetryMs / 1000));
+        }
         if (code == 200 && !deviceKey.isEmpty()) {
             if (!accountCheckUser.isEmpty() && accountCheckUser != ownerName) saveOwnerName(accountCheckUser);
             intakeToday = accountCheckToday;
@@ -1140,7 +1153,9 @@ static void accountLoop() {
             clearDeviceKey();  // removed on the website: the loop switches to pairing
     }
     // Once after boot, then every few hours
-    if (!accountChecked || millis() - lastAccountCheck >= ACCOUNT_CHECK_MS) startAccountCheck();
+    if (!accountChecked || millis() - lastAccountCheck >= ACCOUNT_CHECK_MS
+        || (accountRetryMs && millis() - accountRetryFrom >= accountRetryMs))
+        startAccountCheck();
 }
 
 // ---------------------------------------------------------------- pairing code
