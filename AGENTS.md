@@ -195,7 +195,7 @@ Phase 2 的 `msa-backend` / `msa-frontend` 和它的 `neondb` 库**保持不动*
 | 2026-11-19 | 新建 AGENTS.md |
 | 2026-11-19 | 分支 `feature/device-setup`：配对码接口 + 迁移 `AddDevicePairing` + 9 个测试（共 112 个）；网页"Add device"输入配对码；固件手机配网、多网络保存、配对界面、401 回到配对；已烧录，旧配置自动导入 NVS |
 | 2026-11-19 | PR #2 合并，CI 通过后自动部署成功（Deploy #3） |
-| 2026-11-19 | 分支 `fix/pairing-polish`：Reset 后不再重新导入 `secrets.h`；配对后设备显示账号名（主画面左上角）；设备自检接口 `/api/device/me`（D-19）；Food Log 改为 5 秒刷新 |
+| 2026-11-19 | 分支 `fix/pairing-polish`：Reset 后不再重新导入 `secrets.h`；配对后设备显示账号名（主画面左上角）；设备自检接口 `/api/device/me`（D-19）；Food Log 改为 5 秒刷新；Wi-Fi 列表滑动 + 展开操作；Reset → Unpair、硬件 ID 去重（D-20）；设置页改为全屏列表（不显示相机画面，Back 在右上角，亮度滑条，行：Light / Wi-Fi / Account+Unpair / Head+Center / Power），Wi-Fi 的 Password 预填已保存的密码 |
 
 ---
 

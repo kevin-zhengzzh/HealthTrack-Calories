@@ -69,12 +69,18 @@ static constexpr int MSG_Y = PREV_H;                   // strip under the image,
 static constexpr int TARE_X = PANEL_X + 6, TARE_Y = MSG_Y + 6, TARE_W = PANEL_W - 12, TARE_H = 48;
 static constexpr int GEAR_X = TARE_X, GEAR_Y = TARE_Y - 46, GEAR_W = TARE_W, GEAR_H = 38;
 
-// Settings screen (gear): brightness in the strip under the image, head
-// control and power in the right column, live camera view kept for aiming
+// Settings screen (gear): full screen, one row per setting, Back in the
+// top-right corner. No camera view: aiming is done on the main screen.
 struct Rect { int x, y, w, h; };
-static constexpr Rect BTN_DONE  = {PANEL_X + 6, 6, PANEL_W - 12, 34};
-static constexpr Rect BTN_WIFI  = {PANEL_X + 6, 46, PANEL_W - 12, 34};
-static constexpr Rect BTN_CENTER = {PANEL_X + 6, 142, PANEL_W - 12, 34};
+static constexpr Rect BTN_SET_BACK = {LCD_W - 78, 6, 72, 30};
+static constexpr int SET_ROW_Y = 44, SET_ROW_STEP = 39, SET_ROW_H = 35;
+static constexpr Rect setRow(int i) { return {6, SET_ROW_Y + i * SET_ROW_STEP, LCD_W - 12, SET_ROW_H}; }
+// Button at the right end of row i
+static constexpr Rect setRowButton(int i) { return {LCD_W - 6 - 86, SET_ROW_Y + i * SET_ROW_STEP + 3, 82, SET_ROW_H - 6}; }
+enum SetRow { ROW_LIGHT, ROW_WIFI, ROW_ACCOUNT, ROW_HEAD, ROW_POWER };
+static constexpr int SET_LABEL_X = 14, SET_VALUE_X = 86;
+// Brightness slider in the first row
+static constexpr int SLIDER_X = SET_VALUE_X + 8, SLIDER_W = LCD_W - 6 - 54 - SLIDER_X;
 // On-device Wi-Fi: network list (4 rows per page), keyboard, connecting
 // Scrollable list between the title and the bottom buttons; the tapped row
 // opens to show its actions (connect, disconnect, password, forget)
@@ -91,7 +97,6 @@ static constexpr Rect BTN_JOIN_BACK   = {216, LCD_H - 46, 100, 40};
 // Phone-portal screen and pairing screen
 static constexpr Rect BTN_SETUP_EXIT  = {LCD_W - 80, LCD_H - 42, 74, 36};
 static constexpr Rect BTN_PAIR_WIFI   = {LCD_W - 80, LCD_H - 42, 74, 36};
-static constexpr Rect BTN_POWER = {PANEL_X + 6, MSG_Y + 6, PANEL_W - 12, 48};
 // Aim joystick on the main screen: tap the camera view to show it in the
 // middle, drag the knob to turn the head (further = faster), let go to stop.
 static constexpr Rect PREVIEW_AREA = {0, 0, PREV_W, PREV_H};
@@ -107,10 +112,8 @@ static constexpr uint32_t AIM_HIDE_MS = 5000;  // hide after this long untouched
 static constexpr uint16_t BTN_GREY = 0x39E7;   // same as the gear button
 static constexpr uint8_t JOY_BASE_ALPHA = 110; // 0..255 opacity
 static constexpr uint8_t JOY_KNOB_ALPHA = 200;
-static constexpr Rect BTN_DIM   = {70, MSG_Y + 6, 48, 48};
-static constexpr Rect BTN_BRIGHT = {184, MSG_Y + 6, 48, 48};
 static constexpr int HOME_PITCH = head::PITCH_MIN;  // Home = facing forward, lowest tilt (also the first-boot pose)
-static constexpr int BRIGHT_STEP = 25, BRIGHT_MIN = 10, BRIGHT_MAX = 255;
+static constexpr int BRIGHT_MIN = 10, BRIGHT_MAX = 255;
 
 // Scale zeroing
 static constexpr float ZERO_BAND        = 0.5f;   // reading must stay within this (g)...
@@ -173,6 +176,7 @@ static uint32_t joinShownAt = 0;
 static constexpr uint32_t JOIN_TIMEOUT_MS = 20000;
 
 static void enterWifiSetup();  // defined with the Wi-Fi setup screens
+static void unpairDevice();     // defined with the account check
 
 // Pairing-code flow
 static String pairCode, pairToken, pairMsg;
@@ -216,6 +220,8 @@ static uint32_t lastJoyMove = 0;
 static bool tapped(const Rect& r) {
     return tapNow && tapX >= r.x && tapX < r.x + r.w && tapY >= r.y && tapY < r.y + r.h;
 }
+
+static bool sliderDragging = false;  // finger on the brightness slider
 
 static State state = State::Idle;
 static float weight = 0;
@@ -529,57 +535,89 @@ static void drawAccountMenu() {
     drawButton(BTN_ACCOUNT_CLOSE, "Close", 0x2C4A);
 }
 
-static void drawSettings() {
-    // Brightness row under the image
-    canvas.fillRect(0, MSG_Y, PREV_W, LCD_H - MSG_Y, 0x18E3);
-    canvas.setTextDatum(middle_left);
+// One settings row: card, label on the left, value after it
+static void drawSettingRow(int i, const char* label, const String& value, int valueW) {
+    Rect r = setRow(i);
+    canvas.fillRoundRect(r.x, r.y, r.w, r.h, 8, 0x2945);
     canvas.setFont(&fonts::Font2);
-    canvas.setTextColor(TFT_WHITE);
-    canvas.drawString("Light", 10, MSG_Y + 30);
-    drawButton(BTN_DIM, "-", 0x2C4A, brightness > BRIGHT_MIN);
-    drawButton(BTN_BRIGHT, "+", 0x2C4A, brightness < BRIGHT_MAX);
-    canvas.setTextDatum(middle_center);
-    canvas.setFont(&fonts::Font4);
-    canvas.drawString(String(brightness * 100 / 255) + "%", 151, MSG_Y + 30);
-
-    bool h = head::ok();
-
-    // Right column: done, Wi-Fi, head angles, home, power
-    const int cx = PANEL_X + PANEL_W / 2;
-    canvas.fillRect(PANEL_X, 0, PANEL_W, LCD_H, 0x10A2);
-    drawButton(BTN_DONE, "Done", 0x2C4A);
-    drawButton(BTN_WIFI, "Wi-Fi", 0x2C4A);
-    canvas.setTextDatum(middle_center);
-    canvas.setFont(&fonts::Font0);
-    if (h) {
-        canvas.setTextColor(TFT_LIGHTGREY);
-        canvas.drawString("HEAD", cx, 90);
-        canvas.setFont(&fonts::Font2);
+    canvas.setTextDatum(middle_left);
+    canvas.setTextColor(TFT_LIGHTGREY);
+    canvas.drawString(label, SET_LABEL_X, r.y + r.h / 2);
+    if (value.length()) {
         canvas.setTextColor(TFT_WHITE);
-        canvas.drawString("tilt " + fmtTenths(headPitch), cx, 106);
-        canvas.drawString("turn " + fmtTenths(headYaw), cx, 124);
-    } else {
-        canvas.setTextColor(TFT_ORANGE);
-        canvas.drawString("NO SERVOS", cx, 110);
+        drawFit(value, SET_VALUE_X, r.y + r.h / 2, valueW, middle_left);
     }
-    drawButton(BTN_CENTER, "Center", 0x2C4A, h && !atHome() && !headGliding);
-    bool armed = millis() < powerArmedUntil;
-    drawButton(BTN_POWER, armed ? "Sure?" : "Power", armed ? (uint16_t)0xF800 : (uint16_t)0x9000);
+}
+
+static void drawSettings() {
+    accountTagRect = {0, 0, 0, 0};  // the tag isn't on this screen
+    canvas.fillSprite(0x10A2);
+    canvas.setTextDatum(middle_left);
+    canvas.setFont(&fonts::Font4);
+    canvas.setTextColor(TFT_WHITE);
+    canvas.drawString("Settings", 10, 21);
+    drawButton(BTN_SET_BACK, "Back", 0x2C4A);
+
+    const int fullW = LCD_W - 6 - 10 - SET_VALUE_X;      // value with nothing after it
+    const int besideBtnW = setRowButton(0).x - 8 - SET_VALUE_X;
+
+    // Brightness: drag the slider
+    drawSettingRow(ROW_LIGHT, "Light", "", 0);
+    {
+        Rect r = setRow(ROW_LIGHT);
+        int cy = r.y + r.h / 2;
+        int knobX = SLIDER_X + (brightness - BRIGHT_MIN) * SLIDER_W / (BRIGHT_MAX - BRIGHT_MIN);
+        canvas.fillRoundRect(SLIDER_X, cy - 3, SLIDER_W, 6, 3, 0x4208);
+        canvas.fillRoundRect(SLIDER_X, cy - 3, knobX - SLIDER_X, 6, 3, TFT_GREEN);
+        canvas.fillCircle(knobX, cy, sliderDragging ? 10 : 8, TFT_WHITE);
+        canvas.setFont(&fonts::Font2);
+        canvas.setTextDatum(middle_right);
+        canvas.setTextColor(TFT_WHITE);
+        canvas.drawString(String(brightness * 100 / 255) + "%", LCD_W - 14, cy);
+    }
+
+    // Wi-Fi: whole row opens the network list
+    String wifi = WiFi.status() == WL_CONNECTED ? WiFi.SSID()
+                : net::isOffByUser() ? String("Disconnected") : String("Not connected");
+    drawSettingRow(ROW_WIFI, "Wi-Fi", wifi, fullW - 14);
+    {
+        Rect r = setRow(ROW_WIFI);
+        canvas.setTextDatum(middle_right);
+        canvas.setTextColor(TFT_LIGHTGREY);
+        canvas.drawString(">", r.x + r.w - 10, r.y + r.h / 2);
+    }
+
+    // Account, with Unpair (two taps)
+    drawSettingRow(ROW_ACCOUNT, "Account", ownerName.isEmpty() ? String("(checking...)") : ownerName, besideBtnW);
+    bool unpairArmed = millis() < unpairArmedUntil;
+    drawButton(setRowButton(ROW_ACCOUNT), unpairArmed ? "Sure?" : "Unpair",
+               unpairArmed ? (uint16_t)0xF800 : (uint16_t)0x9000);
+
+    // Head: current angles (moved with the joystick on the main screen), Center
+    bool h = head::ok();
+    drawSettingRow(ROW_HEAD, "Head", h ? "tilt " + fmtTenths(headPitch) + "  turn " + fmtTenths(headYaw)
+                                       : String("No servos"), besideBtnW);
+    drawButton(setRowButton(ROW_HEAD), "Center", 0x2C4A, h && !atHome() && !headGliding);
+
+    // Power (two taps)
+    drawSettingRow(ROW_POWER, "Power", "Battery " + String(M5.Power.getBatteryLevel()) + "%", besideBtnW);
+    bool powerArmed = millis() < powerArmedUntil;
+    drawButton(setRowButton(ROW_POWER), powerArmed ? "Sure?" : "Turn off",
+               powerArmed ? (uint16_t)0xF800 : (uint16_t)0x9000);
 }
 
 static void drawScreen() {
+    if (settingsOpen) {
+        drawSettings();
+        canvas.pushSprite(0, 0);
+        return;
+    }
     if (cameraOk) {
         canvas.pushImage(0, 0, PREV_W, PREV_H, preview);
     } else {
         canvas.fillRect(0, 0, PREV_W, PREV_H, TFT_BLACK);
     }
     drawAccountTag();
-    if (settingsOpen) {
-        drawSettings();
-        drawAccountMenu();
-        canvas.pushSprite(0, 0);
-        return;
-    }
 
     bool online = WiFi.status() == WL_CONNECTED;
     switch (state) {
@@ -746,28 +784,49 @@ static void handleJoystick() {
 }
 
 // Settings screen taps. Changes apply immediately; NVS is written on Done.
+static void closeSettings() {
+    settingsOpen = false;
+    sliderDragging = false;
+    prefs.putInt("bright", brightness);
+    saveHead();
+}
+
 static void handleSettingsTap() {
-    if (tapped(BTN_DONE)) {
-        settingsOpen = false;
-        prefs.putInt("bright", brightness);
-        saveHead();
+    // Brightness slider: follows the finger, saved on release
+    Rect light = setRow(ROW_LIGHT);
+    if (tapped({SLIDER_X - 14, light.y, SLIDER_W + 28, light.h})) sliderDragging = true;
+    if (sliderDragging) {
+        if (touchHeld) {
+            int x = constrain(tapX, SLIDER_X, SLIDER_X + SLIDER_W);
+            int b = BRIGHT_MIN + (x - SLIDER_X) * (BRIGHT_MAX - BRIGHT_MIN) / SLIDER_W;
+            if (b != brightness) {
+                brightness = b;
+                M5.Display.setBrightness(brightness);
+            }
+        } else {
+            sliderDragging = false;
+            prefs.putInt("bright", brightness);
+        }
         return;
     }
-    if (tapped(BTN_DIM) || tapped(BTN_BRIGHT)) {
-        brightness = constrain(brightness + (tapped(BTN_BRIGHT) ? BRIGHT_STEP : -BRIGHT_STEP), BRIGHT_MIN, BRIGHT_MAX);
-        M5.Display.setBrightness(brightness);
-    }
-    if (tapped(BTN_WIFI)) {
-        prefs.putInt("bright", brightness);
-        saveHead();
+
+    if (tapped(BTN_SET_BACK)) {
+        closeSettings();
+    } else if (tapped(setRow(ROW_WIFI))) {
+        closeSettings();
         enterWifiSetup();
-        return;
-    }
-    if (tapped(BTN_CENTER)) {
+    } else if (tapped(setRowButton(ROW_ACCOUNT))) {
+        if (millis() < unpairArmedUntil) {
+            Serial.println("Unpair tapped");
+            closeSettings();
+            unpairDevice();
+        } else {
+            unpairArmedUntil = millis() + 3000;
+        }
+    } else if (tapped(setRowButton(ROW_HEAD))) {
         glideHeadTo(0, HOME_PITCH);
         Serial.println("Head: center");
-    }
-    if (tapped(BTN_POWER)) {
+    } else if (tapped(setRowButton(ROW_POWER))) {
         if (millis() < powerArmedUntil) {
             Serial.println("Powering off");
             prefs.putInt("bright", brightness);
@@ -1288,7 +1347,7 @@ static void runWifiAction(const net::Network& n, WlAction a) {
             }
             break;
         case WlAction::Password:
-            typedPass = "";
+            typedPass = net::savedPassword(chosenSsid);  // edit the saved one ("" if none)
             kbLayer = 0;
             wifiScreen = WifiScreen::Password;
             break;
@@ -1981,6 +2040,7 @@ void loop() {
             if (aimVisible) hideAim();
             settingsOpen = true;
             powerArmedUntil = 0;
+            unpairArmedUntil = 0;
             if (millis() - lastAccountCheck >= ACCOUNT_RECHECK_MIN_MS) startAccountCheck();
             if (state == State::Settling) state = State::Idle;  // no photos while adjusting
         } else if (scaleOk && tapped({TARE_X, TARE_Y, TARE_W, TARE_H})) {
@@ -1994,7 +2054,7 @@ void loop() {
     // photo that was just uploaded stays on screen
     bool holdingPhoto = (state == State::Result || state == State::Error)
                         && millis() - resultSince < RESULT_PHOTO_MS;
-    if (cameraOk && state != State::Uploading && !holdingPhoto) {
+    if (cameraOk && state != State::Uploading && !holdingPhoto && !settingsOpen) {
         camera_fb_t* fb = esp_camera_fb_get();
         if (fb) {
             downscale((const uint16_t*)fb->buf);
