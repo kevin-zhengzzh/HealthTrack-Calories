@@ -938,10 +938,39 @@ static void accountLoop() {
 
 // ---------------------------------------------------------------- pairing code
 
-// Ask the backend for a fresh 6-digit code; the private token stays here
-static void startPairing() {
+// Pairing requests run in a background task: a cold backend (scaled to zero)
+// takes 20-30s to answer, and the screen and its Wi-Fi button must stay live.
+// Results are only handled from pairingLoop, i.e. while in Mode::Pairing.
+static volatile bool pairBusy = false, pairDone = false;
+static bool pairReqIsStart = false;
+static String pairReqPath, pairReqBody, pairReqResponse;
+static int pairReqCode = 0;
+
+static void pairTask(void*) {
     String resp;
-    int code = postJson("/api/device/pairing/start", "{\"name\":\"Stack-chan\"}", resp);
+    int code = postJson(pairReqPath.c_str(), pairReqBody, resp);
+    pairReqResponse = resp;
+    pairReqCode = code;
+    pairDone = true;
+    pairBusy = false;
+    vTaskDelete(nullptr);
+}
+
+static void startPairRequest(bool isStart, const String& path, const String& body) {
+    pairReqIsStart = isStart;
+    pairReqPath = path;
+    pairReqBody = body;
+    pairDone = false;
+    pairBusy = true;
+    if (xTaskCreate(pairTask, "pair", 12288, nullptr, 1, nullptr) != pdPASS) {
+        pairBusy = false;
+        nextPairPoll = millis() + 5000;
+        Serial.println("Pairing: no memory for task");
+    }
+}
+
+// Got a fresh 6-digit code; the private token stays here
+static void onPairStart(int code, const String& resp) {
     JsonDocument doc;
     if (code == 200 && !deserializeJson(doc, resp)) {
         pairCode = (const char*)(doc["code"] | "");
@@ -959,11 +988,8 @@ static void startPairing() {
     }
 }
 
-// Check whether someone has entered our code on the website yet
-static void pollPairing() {
-    String body = String("{\"pairingToken\":\"") + pairToken + "\"}";
-    String resp;
-    int code = postJson("/api/device/pairing/poll", body, resp);
+// Has someone entered our code on the website yet?
+static void onPairPoll(int code, const String& resp) {
     JsonDocument doc;
     if (code != 200 || deserializeJson(doc, resp)) {
         pairMsg = "Server unreachable, retrying...";
@@ -995,10 +1021,19 @@ static void pollPairing() {
 }
 
 static void pairingLoop() {
+    if (pairBusy) return;
+    if (pairDone) {
+        pairDone = false;
+        if (pairReqIsStart) onPairStart(pairReqCode, pairReqResponse);
+        else onPairPoll(pairReqCode, pairReqResponse);
+        return;
+    }
     if (WiFi.status() != WL_CONNECTED) return;
     if (millis() < nextPairPoll) return;
-    if (pairToken.isEmpty() || millis() > pairExpiresAt) startPairing();
-    else pollPairing();
+    if (pairToken.isEmpty() || millis() > pairExpiresAt)
+        startPairRequest(true, "/api/device/pairing/start", "{\"name\":\"Stack-chan\"}");
+    else
+        startPairRequest(false, "/api/device/pairing/poll", String("{\"pairingToken\":\"") + pairToken + "\"}");
 }
 
 // ---------------------------------------------------------------- on-device Wi-Fi setup
@@ -1126,10 +1161,14 @@ static void handleWifiListTap() {
         int i = wifiPage * WL_ROWS + r;
         if (i >= (int)wifiList.size()) break;
         if (!tapped({6, WL_ROW_Y + r * WL_ROW_H, LCD_W - 52, WL_ROW_H - 4})) continue;
-        if (wifiList[i].ssid == connectedSsid()) return;  // already on it
         chosenSsid = wifiList[i].ssid;
         kbNote = "";
-        if (wifiList[i].open) {
+        if (chosenSsid == connectedSsid() && !wifiList[i].open) {
+            // Already on it: the only useful thing is typing a new password
+            typedPass = "";
+            kbLayer = 0;
+            wifiScreen = WifiScreen::Password;
+        } else if (wifiList[i].open) {
             typedPass = "";
             startJoin();
         } else if (wifiList[i].saved) {
@@ -1152,6 +1191,7 @@ static void handleWifiListTap() {
     } else if (tapped(BTN_WL_RESET)) {
         if (millis() < resetArmedUntil) {
             net::forgetAll();
+            WiFi.disconnect(false, true);  // drop the connection and the SDK's stored credentials
             clearDeviceKey();
             resetArmedUntil = 0;
             startWifiScan();  // refresh the "saved" marks
@@ -1365,6 +1405,7 @@ static void handleSetupTap() {
         if (millis() < resetArmedUntil) {
             // Factory reset: forget every network and the device key
             net::forgetAll();
+            WiFi.disconnect(false, true);  // drop the connection and the SDK's stored credentials
             clearDeviceKey();
             resetArmedUntil = 0;
         } else {
