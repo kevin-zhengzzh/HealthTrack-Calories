@@ -73,6 +73,7 @@ public class DevicePairingControllerTests
         var paired = Body<PairingPollResult>(await NewController(db, cache).Poll(new PairingPollRequest(started.PairingToken)));
         Assert.Equal("paired", paired.Status);
         Assert.StartsWith("hk_", paired.Key);
+        Assert.Equal("me", paired.Username);
 
         // The key works for uploads: its hash is what's stored
         var device = await db.Devices.SingleAsync();

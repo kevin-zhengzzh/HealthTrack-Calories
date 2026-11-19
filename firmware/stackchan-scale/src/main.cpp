@@ -150,6 +150,7 @@ static Mode mode = Mode::Normal;
 
 // Device key from pairing, stored in NVS namespace "dev"
 static String deviceKey;
+static String ownerName;  // account this device logs meals to (from pairing)
 
 // On-device Wi-Fi setup
 enum class WifiScreen { List, Password, Joining, Phone };
@@ -492,6 +493,14 @@ static void drawSettings() {
     canvas.setFont(&fonts::Font4);
     canvas.drawString(String(brightness * 100 / 255) + "%", 151, MSG_Y + 30);
 
+    // Whose account meals go to (devices paired before this was added don't know)
+    if (!ownerName.isEmpty()) {
+        canvas.fillRoundRect(4, 4, PREV_W - 8, 22, 6, 0x18E3);
+        canvas.setFont(&fonts::Font2);
+        canvas.setTextColor(TFT_LIGHTGREY);
+        drawFit("Account: " + ownerName, 10, 15, PREV_W - 20, middle_left);
+    }
+
     bool h = head::ok();
 
     // Right column: done, Wi-Fi, head angles, home, power
@@ -772,13 +781,14 @@ static int postJson(const char* path, const String& body, String& response) {
     return code;
 }
 
-static void loadDeviceKey() {
+static void loadDeviceKey(bool importSecrets) {
     Preferences p;
     p.begin("dev", false);
     deviceKey = p.getString("key", "");
+    ownerName = p.getString("owner", "");
 #ifdef DEVICE_KEY
     // One-time migration from secrets.h (development builds)
-    if (deviceKey.isEmpty() && String(DEVICE_KEY).startsWith("hk_")) {
+    if (importSecrets && deviceKey.isEmpty() && String(DEVICE_KEY).startsWith("hk_")) {
         deviceKey = DEVICE_KEY;
         p.putString("key", deviceKey);
         Serial.println("Device key imported from secrets.h");
@@ -787,20 +797,24 @@ static void loadDeviceKey() {
     p.end();
 }
 
-static void saveDeviceKey(const String& key) {
+static void saveDeviceKey(const String& key, const String& owner) {
     Preferences p;
     p.begin("dev", false);
     p.putString("key", key);
+    p.putString("owner", owner);
     p.end();
     deviceKey = key;
+    ownerName = owner;
 }
 
 static void clearDeviceKey() {
     Preferences p;
     p.begin("dev", false);
     p.remove("key");
+    p.remove("owner");
     p.end();
     deviceKey = "";
+    ownerName = "";
     Serial.println("Device key cleared");
 }
 
@@ -842,14 +856,15 @@ static void pollPairing() {
     pairMsg = "";
     String status = doc["status"] | "";
     if (status == "paired") {
-        saveDeviceKey(String((const char*)(doc["key"] | "")));
+        String owner = doc["username"] | "";
+        saveDeviceKey(String((const char*)(doc["key"] | "")), owner);
         String name = doc["deviceName"] | "Stack-chan";
-        Serial.printf("Pairing: done, now '%s'\n", name.c_str());
+        Serial.printf("Pairing: done, now '%s' for '%s'\n", name.c_str(), owner.c_str());
         pairCode = pairToken = "";
         mode = Mode::Normal;
         state = State::Result;
         line1 = "Paired!";
-        line2 = "Now " + name;
+        line2 = owner.isEmpty() ? "Now " + name : "Hi, " + owner + "!";
         resultSince = millis() - RESULT_PHOTO_MS;  // no photo to hold
         setLed(0x002000);
     } else if (status == "expired") {
@@ -1498,14 +1513,18 @@ void setup() {
     setLed(0x002000);
 
     net::begin();
+    // secrets.h is imported on the very first boot only. The flag lives in
+    // "hts", which Reset doesn't clear — otherwise a reset device would pick
+    // the old network and key straight back up on its next boot.
+    bool importSecrets = !prefs.getBool("seeded", false);
 #ifdef WIFI_SSID
-    // One-time migration from secrets.h (development builds)
-    if (net::savedCount() == 0 && strlen(WIFI_SSID) > 0) {
+    if (importSecrets && net::savedCount() == 0 && strlen(WIFI_SSID) > 0) {
         net::addNetwork(WIFI_SSID, WIFI_PASSWORD);
         Serial.println("Wi-Fi network imported from secrets.h");
     }
 #endif
-    loadDeviceKey();
+    loadDeviceKey(importSecrets);
+    prefs.putBool("seeded", true);
 
     showBootMessage("Connecting Wi-Fi...");
     WiFi.mode(WIFI_STA);

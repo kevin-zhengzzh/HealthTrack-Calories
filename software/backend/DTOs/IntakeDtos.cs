@@ -15,7 +15,7 @@ public record PairingStartResult(string Code, string PairingToken, DateTime Expi
 public record PairingClaimRequest(string Code, string? Name);
 public record PairingPollRequest(string PairingToken);
 // Status: "pending" | "paired" (Key set, returned once) | "expired"
-public record PairingPollResult(string Status, string? Key, string? DeviceName);
+public record PairingPollResult(string Status, string? Key, string? DeviceName, string? Username = null);
 
 public record IntakeRecordDto(
     int Id,
