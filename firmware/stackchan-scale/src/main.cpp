@@ -84,18 +84,17 @@ static constexpr int SLIDER_X = SET_VALUE_X + 8, SLIDER_W = LCD_W - 6 - 54 - SLI
 // On-device Wi-Fi: network list (4 rows per page), keyboard, connecting
 // Scrollable list between the title and the bottom buttons; the tapped row
 // opens to show its actions (connect, disconnect, password, forget)
-static constexpr int WL_ROW_Y = 32, WL_VIEW_H = LCD_H - 46 - WL_ROW_Y;
+static constexpr int WL_ROW_Y = 44, WL_VIEW_H = LCD_H - 46 - WL_ROW_Y;
 static constexpr int WL_ROW_H = 38, WL_CARD_H = 34, WL_EXP_H = 42;
 static constexpr int WL_X = 6, WL_W = LCD_W - 18;  // room for the scroll bar
-static constexpr Rect BTN_WL_RESCAN = {4, LCD_H - 42, 100, 38};
-static constexpr Rect BTN_WL_PHONE  = {110, LCD_H - 42, 100, 38};
-static constexpr Rect BTN_WL_EXIT   = {216, LCD_H - 42, 100, 38};
+static constexpr Rect BTN_WL_RESCAN = {4, LCD_H - 42, (LCD_W - 14) / 2, 38};
+static constexpr Rect BTN_WL_PHONE  = {10 + (LCD_W - 14) / 2, LCD_H - 42, (LCD_W - 14) / 2, 38};
 static constexpr int KB_Y = 62, KB_KEY_H = 42;   // keyboard rows at 62, 106, 150, 194
 static constexpr Rect BTN_JOIN_RETYPE = {4, LCD_H - 46, 100, 40};
 static constexpr Rect BTN_JOIN_SAVE   = {110, LCD_H - 46, 100, 40};
 static constexpr Rect BTN_JOIN_BACK   = {216, LCD_H - 46, 100, 40};
 // Phone-portal screen and pairing screen
-static constexpr Rect BTN_SETUP_EXIT  = {LCD_W - 80, LCD_H - 42, 74, 36};
+static constexpr Rect BTN_SETUP_EXIT  = {LCD_W - 78, 6, 72, 30};  // same place as Settings' Back
 static constexpr Rect BTN_PAIR_WIFI   = {LCD_W - 80, LCD_H - 42, 74, 36};
 // Aim joystick on the main screen: tap the camera view to show it in the
 // middle, drag the knob to turn the head (further = faster), let go to stop.
@@ -222,6 +221,7 @@ static bool tapped(const Rect& r) {
 }
 
 static bool sliderDragging = false;  // finger on the brightness slider
+static bool wifiFromSettings = false; // Wi-Fi setup was opened from Settings
 
 static State state = State::Idle;
 static float weight = 0;
@@ -815,6 +815,7 @@ static void handleSettingsTap() {
     } else if (tapped(setRow(ROW_WIFI))) {
         closeSettings();
         enterWifiSetup();
+        wifiFromSettings = true;
     } else if (tapped(setRowButton(ROW_ACCOUNT))) {
         if (millis() < unpairArmedUntil) {
             Serial.println("Unpair tapped");
@@ -1178,6 +1179,7 @@ static void startWifiScan() {
 }
 
 static void enterWifiSetup() {
+    wifiFromSettings = false;  // set by the Settings row after calling this
     mode = Mode::WifiSetup;
     wifiScreen = WifiScreen::List;
     settingsOpen = false;
@@ -1189,6 +1191,12 @@ static void exitWifiSetup() {
     if (net::portalActive()) net::stopPortal();
     net::pause(false);
     mode = Mode::Normal;
+    // Opened from Settings: back to Settings (unless unpaired: pairing comes first)
+    if (wifiFromSettings && !deviceKey.isEmpty()) {
+        settingsOpen = true;
+        powerArmedUntil = unpairArmedUntil = 0;
+    }
+    wifiFromSettings = false;
 }
 
 static void startJoin() {
@@ -1302,10 +1310,11 @@ static void drawWifiList() {
 
     canvas.fillRect(0, 0, LCD_W, WL_ROW_Y - 2, 0x10A2);
     canvas.fillRect(0, WL_ROW_Y + WL_VIEW_H, LCD_W, LCD_H - WL_ROW_Y - WL_VIEW_H, 0x10A2);
-    canvas.setTextDatum(top_left);
+    canvas.setTextDatum(middle_left);
     canvas.setFont(&fonts::Font4);
     canvas.setTextColor(TFT_WHITE);
-    canvas.drawString("Choose Wi-Fi", 8, 4);
+    canvas.drawString("Wi-Fi", 10, 21);
+    drawButton(BTN_SET_BACK, "Back", 0x2C4A);
 
     canvas.setFont(&fonts::Font2);
     canvas.setTextDatum(middle_center);
@@ -1320,8 +1329,7 @@ static void drawWifiList() {
     }
 
     drawButton(BTN_WL_RESCAN, "Rescan", 0x2C4A, !wifiScanning);
-    drawButton(BTN_WL_PHONE, "Phone", 0x2C4A);
-    drawButton(BTN_WL_EXIT, "Exit", 0x2C4A);
+    drawButton(BTN_WL_PHONE, "Phone setup", 0x2C4A);
     canvas.pushSprite(0, 0);
 }
 
@@ -1440,7 +1448,7 @@ static void handleWifiListTap() {
     else if (tapped(BTN_WL_PHONE)) {
         wifiScreen = WifiScreen::Phone;
         net::startPortal();
-    } else if (tapped(BTN_WL_EXIT)) {
+    } else if (tapped(BTN_SET_BACK)) {
         exitWifiSetup();
     }
 }
@@ -1603,7 +1611,7 @@ static void drawSetupScreen() {
     canvas.setTextColor(TFT_WHITE);
     canvas.setTextDatum(top_left);
     canvas.setFont(&fonts::Font4);
-    canvas.drawString("Wi-Fi setup", 8, 6);
+    canvas.drawString("Phone setup", 8, 6);
 
     // QR joins the setup hotspot (it carries the password, so no typing)
     canvas.fillRoundRect(6, 36, 150, 150, 6, TFT_WHITE);
@@ -1628,9 +1636,9 @@ static void drawSetupScreen() {
              : net::savedCount() ? "Saved: " + net::savedSsid(0) : "No Wi-Fi saved yet";
     canvas.setTextColor(c);
     canvas.setFont(&fonts::Font2);
-    drawFit(m, 8, LCD_H - 36, LCD_W - 96, top_left);  // left of the Exit button
+    drawFit(m, 8, LCD_H - 36, LCD_W - 16, top_left);
 
-    drawButton(BTN_SETUP_EXIT, "Exit", 0x2C4A);
+    drawButton(BTN_SETUP_EXIT, "Back", 0x2C4A);
     canvas.pushSprite(0, 0);
 }
 
