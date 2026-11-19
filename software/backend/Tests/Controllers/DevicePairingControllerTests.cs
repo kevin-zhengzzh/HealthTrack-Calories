@@ -186,6 +186,27 @@ public class DevicePairingControllerTests
     }
 
     [Fact]
+    public async Task DeviceMe_ReturnsAccount_Until_DeviceIsRemoved()
+    {
+        using var db = NewDb();
+        var key = DeviceKeys.Generate();
+        var device = new Device { UserId = Me, Name = "Stack-chan", KeyHash = DeviceKeys.Hash(key) };
+        db.Devices.Add(device);
+        await db.SaveChangesAsync();
+        var controller = new DeviceController(db);
+
+        var me = Body<DeviceSelfDto>(await controller.Me(key));
+        Assert.Equal("me", me.Username);
+        Assert.Equal("Stack-chan", me.Name);
+        Assert.NotNull(device.LastSeenAt);
+
+        device.RevokedAt = DateTime.UtcNow;
+        await db.SaveChangesAsync();
+        Assert.IsType<UnauthorizedObjectResult>(await controller.Me(key));
+        Assert.IsType<UnauthorizedObjectResult>(await controller.Me(null));
+    }
+
+    [Fact]
     public async Task Claim_RespectsDeviceLimit()
     {
         using var db = NewDb();

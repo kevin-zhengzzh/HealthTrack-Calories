@@ -480,6 +480,20 @@ static void drawJoystick() {
     canvas.drawCircle(kx, ky, JOY_KNOB_R, TFT_WHITE);
 }
 
+// Whose account meals go to: a translucent tag in the image's top-left corner
+static void drawAccountTag() {
+    if (ownerName.isEmpty()) return;
+    canvas.setFont(&fonts::Font2);
+    const int x = 6, y = 6, h = 22;
+    int tw = min((int)canvas.textWidth(ownerName), PREV_W / 2);
+    fillRoundRectAlpha({x, y, tw + 32, h}, h / 2, TFT_BLACK, 150);
+    // Person icon
+    canvas.fillCircle(x + 13, y + 8, 4, TFT_LIGHTGREY);
+    canvas.fillRoundRect(x + 7, y + 13, 13, 7, 3, TFT_LIGHTGREY);
+    canvas.setTextColor(TFT_WHITE);
+    drawFit(ownerName, x + 24, y + h / 2, tw, middle_left);
+}
+
 static void drawSettings() {
     // Brightness row under the image
     canvas.fillRect(0, MSG_Y, PREV_W, LCD_H - MSG_Y, 0x18E3);
@@ -492,14 +506,6 @@ static void drawSettings() {
     canvas.setTextDatum(middle_center);
     canvas.setFont(&fonts::Font4);
     canvas.drawString(String(brightness * 100 / 255) + "%", 151, MSG_Y + 30);
-
-    // Whose account meals go to (devices paired before this was added don't know)
-    if (!ownerName.isEmpty()) {
-        canvas.fillRoundRect(4, 4, PREV_W - 8, 22, 6, 0x18E3);
-        canvas.setFont(&fonts::Font2);
-        canvas.setTextColor(TFT_LIGHTGREY);
-        drawFit("Account: " + ownerName, 10, 15, PREV_W - 20, middle_left);
-    }
 
     bool h = head::ok();
 
@@ -532,6 +538,7 @@ static void drawScreen() {
     } else {
         canvas.fillRect(0, 0, PREV_W, PREV_H, TFT_BLACK);
     }
+    drawAccountTag();
     if (settingsOpen) {
         drawSettings();
         canvas.pushSprite(0, 0);
@@ -807,6 +814,14 @@ static void saveDeviceKey(const String& key, const String& owner) {
     ownerName = owner;
 }
 
+static void saveOwnerName(const String& owner) {
+    Preferences p;
+    p.begin("dev", false);
+    p.putString("owner", owner);
+    p.end();
+    ownerName = owner;
+}
+
 static void clearDeviceKey() {
     Preferences p;
     p.begin("dev", false);
@@ -816,6 +831,72 @@ static void clearDeviceKey() {
     deviceKey = "";
     ownerName = "";
     Serial.println("Device key cleared");
+}
+
+// ---------------------------------------------------------------- account check
+
+// Asks the backend whose account this key belongs to; a 401 means the device
+// was removed on the website. Runs in its own task because a cold backend
+// (scaled to zero) takes 20-30s to answer and the screen must stay live.
+// Not a frequent heartbeat: every request wakes the backend and database,
+// which then stay billed for several minutes.
+static constexpr uint32_t ACCOUNT_CHECK_MS = 6UL * 60 * 60 * 1000;  // when idle
+static constexpr uint32_t ACCOUNT_RECHECK_MIN_MS = 60 * 1000;        // on opening settings
+static volatile bool accountCheckBusy = false;
+static volatile int accountCheckResult = 0;  // HTTP status of a finished check, 0 = none
+static String accountCheckUser;              // set by the task before accountCheckResult
+static bool accountChecked = false;
+static uint32_t lastAccountCheck = 0;
+
+static void accountCheckTask(void* arg) {
+    String* key = (String*)arg;
+    String user;
+    int code = -1;
+    {
+        HTTPClient http;
+        WiFiClient plain;
+        WiFiClientSecure secure;
+        if (beginHttp(http, plain, secure, String(API_BASE_URL) + "/api/device/me")) {
+            http.setTimeout(HTTP_TIMEOUT);
+            http.addHeader("X-Device-Key", *key);
+            code = http.GET();
+            JsonDocument doc;
+            if (code == 200 && !deserializeJson(doc, http.getString()))
+                user = (const char*)(doc["username"] | "");
+            http.end();
+        }
+    }
+    delete key;
+    accountCheckUser = user;
+    accountCheckResult = code == 0 ? -1 : code;
+    accountCheckBusy = false;
+    vTaskDelete(nullptr);
+}
+
+static void startAccountCheck() {
+    if (accountCheckBusy || deviceKey.isEmpty() || WiFi.status() != WL_CONNECTED || state == State::Uploading)
+        return;
+    accountCheckBusy = true;
+    accountChecked = true;
+    lastAccountCheck = millis();
+    if (xTaskCreate(accountCheckTask, "account", 12288, new String(deviceKey), 1, nullptr) != pdPASS) {
+        accountCheckBusy = false;
+        Serial.println("Account check: no memory for task");
+    }
+}
+
+static void accountLoop() {
+    int code = accountCheckResult;
+    if (code != 0) {
+        accountCheckResult = 0;
+        Serial.printf("Account check: %d '%s'\n", code, accountCheckUser.c_str());
+        if (code == 200 && !accountCheckUser.isEmpty() && accountCheckUser != ownerName)
+            saveOwnerName(accountCheckUser);
+        else if (code == 401 && !deviceKey.isEmpty())
+            clearDeviceKey();  // removed on the website: the loop switches to pairing
+    }
+    // Once after boot, then every few hours
+    if (!accountChecked || millis() - lastAccountCheck >= ACCOUNT_CHECK_MS) startAccountCheck();
 }
 
 // ---------------------------------------------------------------- pairing code
@@ -858,6 +939,8 @@ static void pollPairing() {
     if (status == "paired") {
         String owner = doc["username"] | "";
         saveDeviceKey(String((const char*)(doc["key"] | "")), owner);
+        accountChecked = true;
+        lastAccountCheck = millis();
         String name = doc["deviceName"] | "Stack-chan";
         Serial.printf("Pairing: done, now '%s' for '%s'\n", name.c_str(), owner.c_str());
         pairCode = pairToken = "";
@@ -1573,6 +1656,7 @@ void loop() {
 
     net::maintain();
     logWifiChanges();
+    accountLoop();
 
     // No key yet (first run, or removed on the website): show a pairing code
     if (mode == Mode::Normal && deviceKey.isEmpty()) {
@@ -1599,6 +1683,7 @@ void loop() {
             if (aimVisible) hideAim();
             settingsOpen = true;
             powerArmedUntil = 0;
+            if (millis() - lastAccountCheck >= ACCOUNT_RECHECK_MIN_MS) startAccountCheck();
             if (state == State::Settling) state = State::Idle;  // no photos while adjusting
         } else if (scaleOk && tapped({TARE_X, TARE_Y, TARE_W, TARE_H})) {
             Serial.println("TARE tapped");
@@ -1640,7 +1725,7 @@ void loop() {
                     line1 = "Camera not ready";
                     line2 = "Restart Stack-chan";
                     resultSince = millis();
-                } else if (WiFi.status() == WL_CONNECTED) {
+                } else if (WiFi.status() == WL_CONNECTED && !accountCheckBusy) {
                     captureAndUpload();
                     resultSince = millis();
                 }
