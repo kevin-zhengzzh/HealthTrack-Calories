@@ -1945,6 +1945,9 @@ void loop() {
             delay(50);
             return;
         }
+        // Off to Wi-Fi setup: its screen is drawn next loop (don't flash
+        // the weighing screen in between)
+        if (mode == Mode::WifiSetup) return;
         tapNow = false;  // same for the tap (if any) that ended pairing
     }
 
@@ -1971,6 +1974,7 @@ void loop() {
         if (ownerName.isEmpty() && millis() - lastAccountCheck >= ACCOUNT_RECHECK_MIN_MS) startAccountCheck();
     } else if (settingsOpen) {
         handleSettingsTap();
+        if (mode == Mode::WifiSetup) return;  // Wi-Fi button: draw its screen next loop
     } else if (state != State::Uploading) {
         handleJoystick();
         if (tapped({GEAR_X, GEAR_Y, GEAR_W, GEAR_H})) {
