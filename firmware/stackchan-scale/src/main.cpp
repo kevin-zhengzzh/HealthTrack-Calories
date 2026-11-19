@@ -232,6 +232,10 @@ static bool tapped(const Rect& r) {
     return tapNow && tapX >= r.x && tapX < r.x + r.w && tapY >= r.y && tapY < r.y + r.h;
 }
 
+static bool inRect(int x, int y, const Rect& r) {
+    return x >= r.x && x < r.x + r.w && y >= r.y && y < r.y + r.h;
+}
+
 static bool sliderDragging = false;  // finger on the brightness slider
 static bool wifiFromSettings = false; // Wi-Fi setup was opened from Settings
 
@@ -1175,7 +1179,7 @@ static void accountLoop() {
 // can be deleted there (DELETE /api/intake/device/{id}, today's only). Both
 // answer with the updated list and totals. Requests run in a task, one at a
 // time, and never alongside an upload or an account check.
-struct Meal { int id; String name; int kcal; time_t at; };
+struct Meal { int id; String name; int kcal; float grams; time_t at; };
 static std::vector<Meal> todayMeals;
 static bool todayLoaded = false;        // list fetched since the screen opened
 static String todayError;
@@ -1191,7 +1195,7 @@ static bool todayTouching = false, todayDragged = false;
 static int todayStartX = 0, todayStartY = 0, todayStartScroll = 0;
 
 static constexpr int TD_ROW_Y = 84, TD_VIEW_H = LCD_H - 4 - TD_ROW_Y;
-static constexpr int TD_ROW_H = 36, TD_CARD_H = 32, TD_X = 6, TD_W = LCD_W - 18;
+static constexpr int TD_ROW_H = 36, TD_CARD_H = 32, TD_EXP_H = 42, TD_X = 6, TD_W = LCD_W - 18;
 
 struct TodayReq { String key, date; int deleteId; };
 
@@ -1250,13 +1254,22 @@ static void applyToday(const String& body, const String& date) {
     for (JsonObject m : doc["meals"].as<JsonArray>()) {
         String name = (const char*)(m["foodName"] | "");
         if (name.isEmpty()) name = "Unnamed food";
-        todayMeals.push_back({m["id"] | 0, name, m["calories"] | 0, (time_t)(m["createdAtUnix"] | 0LL)});
+        todayMeals.push_back({m["id"] | 0, name, m["calories"] | 0, m["weightGrams"] | 0.0f,
+                              (time_t)(m["createdAtUnix"] | 0LL)});
     }
     todayLoaded = true;
     todayError = "";
 }
 
-static int todayMaxScroll() { return max(0, (int)todayMeals.size() * TD_ROW_H - TD_VIEW_H); }
+// Top of row i on screen (rows below the opened one move down)
+static int todayRowY(int i) {
+    return TD_ROW_Y + i * TD_ROW_H + (todaySel >= 0 && i > todaySel ? TD_EXP_H : 0) - todayScroll;
+}
+
+static int todayMaxScroll() {
+    int content = (int)todayMeals.size() * TD_ROW_H + (todaySel >= 0 ? TD_EXP_H : 0);
+    return max(0, content - TD_VIEW_H);
+}
 
 static void todayLoop() {
     int code = todayResult;
@@ -1302,7 +1315,10 @@ static void todayLoop() {
     todayWantFetch = false;
 }
 
-static Rect todayDeleteRect(int rowY) { return {TD_X + TD_W - 80, rowY + 3, 76, TD_CARD_H - 6}; }
+// Delete button in the opened part of a row, on the right
+static Rect todayDeleteRect(int rowY) {
+    return {TD_X + TD_W / 2, rowY + TD_CARD_H + 4, TD_W / 2 - 8, TD_EXP_H - 8};
+}
 
 static void drawToday() {
     canvas.fillSprite(0x10A2);
@@ -1310,11 +1326,12 @@ static void drawToday() {
     // Rows first; title and summary are painted over what scrolls under them
     if (todayLoaded) {
         for (int i = 0; i < (int)todayMeals.size(); i++) {
-            int y = TD_ROW_Y + i * TD_ROW_H - todayScroll;
-            if (y + TD_CARD_H < TD_ROW_Y || y > TD_ROW_Y + TD_VIEW_H) continue;
-            const Meal& m = todayMeals[i];
+            int y = todayRowY(i);
             bool sel = i == todaySel;
-            canvas.fillRoundRect(TD_X, y, TD_W, TD_CARD_H, 6, sel ? 0x3186 : 0x2945);
+            int h = TD_CARD_H + (sel ? TD_EXP_H : 0);
+            if (y + h < TD_ROW_Y || y > TD_ROW_Y + TD_VIEW_H) continue;
+            const Meal& m = todayMeals[i];
+            canvas.fillRoundRect(TD_X, y, TD_W, h, 6, sel ? 0x3186 : 0x2945);
             int midY = y + TD_CARD_H / 2;
             // Time
             char hhmm[6] = "";
@@ -1327,8 +1344,8 @@ static void drawToday() {
             canvas.setTextColor(TFT_LIGHTGREY);
             canvas.setTextDatum(middle_left);
             canvas.drawString(hhmm, TD_X + 8, midY);
-            // kcal on the right, left of the Delete button when selected
-            int right = sel ? todayDeleteRect(y).x - 6 : TD_X + TD_W - 8;
+            // Name, then kcal on the right
+            int right = TD_X + TD_W - 8;
             canvas.setFont(&fonts::Font2);
             canvas.setTextColor(TFT_WHITE);
             canvas.setTextDatum(middle_right);
@@ -1336,10 +1353,17 @@ static void drawToday() {
             canvas.drawString(kcal, right, midY);
             int nameX = TD_X + 44;
             drawFit(m.name, nameX, midY, right - (int)canvas.textWidth(kcal) - 10 - nameX, middle_left);
+
             if (sel) {
+                // Opened: weight on the left, Delete (two taps) on the right
+                Rect del = todayDeleteRect(y);
+                canvas.setFont(&fonts::Font2);
+                canvas.setTextColor(TFT_LIGHTGREY);
+                canvas.setTextDatum(middle_left);
+                canvas.drawString(String(m.grams, 1) + " g", TD_X + 10, del.y + del.h / 2);
                 bool busy = todayDeleting == m.id || todayWantDelete == m.id;
                 bool armed = millis() < deleteArmedUntil;
-                drawButton(todayDeleteRect(y), busy ? "..." : armed ? "Sure?" : "Delete",
+                drawButton(del, busy ? "Deleting..." : armed ? "Sure?" : "Delete",
                            armed || busy ? (uint16_t)0xF800 : (uint16_t)0x9000, !busy);
             }
         }
@@ -1420,24 +1444,40 @@ static void handleTodayTap() {
         }
         todayTouching = false;
         if (todayDragged) return;
-        int i = (todayStartY - TD_ROW_Y + todayScroll) / TD_ROW_H;
-        if (i < 0 || i >= (int)todayMeals.size()) return;
-        int y = TD_ROW_Y + i * TD_ROW_H - todayScroll;
-        if (todayStartY > y + TD_CARD_H) return;  // the gap between rows
-        Rect del = todayDeleteRect(y);
-        bool onDelete = i == todaySel && todayStartX >= del.x && todayStartX < del.x + del.w;
-        if (!onDelete) {
-            todaySel = i == todaySel ? -1 : i;  // tap a row to show / hide Delete
-            deleteArmedUntil = 0;
-        } else if (todayDeleting || todayWantDelete) {
-            // a delete is already on its way
-        } else if (millis() < deleteArmedUntil) {
-            todayWantDelete = todayMeals[i].id;
-            deleteArmedUntil = 0;
-            todayError = "";
-        } else {
-            deleteArmedUntil = millis() + 3000;
+        int x = todayStartX, y = todayStartY;
+
+        // Delete in the opened row
+        if (todaySel >= 0 && todaySel < (int)todayMeals.size() && inRect(x, y, todayDeleteRect(todayRowY(todaySel)))) {
+            if (todayDeleting || todayWantDelete) {
+                // a delete is already on its way
+            } else if (millis() < deleteArmedUntil) {
+                todayWantDelete = todayMeals[todaySel].id;
+                deleteArmedUntil = 0;
+                todayError = "";
+            } else {
+                deleteArmedUntil = millis() + 3000;
+            }
+            return;
         }
+        // A row: open it, or close it if it's the open one
+        for (int i = 0; i < (int)todayMeals.size(); i++) {
+            int rowY = todayRowY(i);
+            int h = TD_CARD_H + (i == todaySel ? TD_EXP_H : 0);
+            if (!inRect(x, y, {TD_X, rowY, TD_W, h})) continue;
+            deleteArmedUntil = 0;
+            todaySel = todaySel == i ? -1 : i;
+            if (todaySel >= 0) {
+                // Scroll so the opened row, with its button, is fully visible
+                int top = i * TD_ROW_H, bottom = top + TD_CARD_H + TD_EXP_H;
+                if (bottom - todayScroll > TD_VIEW_H) todayScroll = bottom - TD_VIEW_H;
+                if (top < todayScroll) todayScroll = top;
+            }
+            todayScroll = constrain(todayScroll, 0, todayMaxScroll());
+            return;
+        }
+        todaySel = -1;  // empty space closes the opened row
+        deleteArmedUntil = 0;
+        todayScroll = constrain(todayScroll, 0, todayMaxScroll());
         return;
     }
     if (tapped(BTN_SET_BACK)) {
@@ -1712,9 +1752,6 @@ static void drawWifiList() {
     canvas.pushSprite(0, 0);
 }
 
-static bool inRect(int x, int y, const Rect& r) {
-    return x >= r.x && x < r.x + r.w && y >= r.y && y < r.y + r.h;
-}
 
 static void runWifiAction(const net::Network& n, WlAction a) {
     chosenSsid = n.ssid;
