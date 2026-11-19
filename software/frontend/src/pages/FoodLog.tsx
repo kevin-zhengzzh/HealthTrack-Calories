@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { claimPairingCode, createDevice, deleteIntake, fetchIntakeImageUrl, getDevices, getIntakeHistory, revokeDevice, updateIntake } from '../api'
 import { useStore } from '../store'
 import { useLockBodyScroll } from '../hooks/useLockBodyScroll'
@@ -105,12 +105,36 @@ export default function FoodLog() {
 
   useLockBodyScroll(editing !== null || confirmDelete !== null || viewingPhoto !== null || pairing || newDevice !== null || confirmRevoke !== null)
 
+  // Devices change from the other end too (unpaired on the device, or
+  // finishing pairing), so they're polled with the meals. Changes we didn't
+  // make on this page are announced; our own edits update the list quietly.
+  const devicesRef = useRef<Device[]>([])
+  const applyDevices = useCallback((next: Device[], announce: boolean) => {
+    if (announce) {
+      const prev = devicesRef.current
+      for (const d of prev) {
+        if (!next.some((n) => n.id === d.id)) pushToast(`${d.name} was unpaired.`, 'success')
+      }
+      for (const d of next) {
+        if (prev.find((p) => p.id === d.id)?.awaitingDevice && !d.awaitingDevice) pushToast(`${d.name} is connected.`, 'success')
+      }
+    }
+    devicesRef.current = next
+    setDevices(next)
+  }, [pushToast])
+
   const refresh = useCallback(() => {
-    return getIntakeHistory().then(setRecords).catch(console.error)
-  }, [])
+    return Promise.all([
+      getIntakeHistory().then(setRecords).catch(console.error),
+      getDevices().then((ds) => applyDevices(ds, true)).catch(console.error),
+    ])
+  }, [applyDevices])
 
   useEffect(() => {
-    Promise.all([refresh(), getDevices().then(setDevices).catch(console.error)]).finally(() => setLoading(false))
+    Promise.all([
+      getIntakeHistory().then(setRecords).catch(console.error),
+      getDevices().then((ds) => applyDevices(ds, false)).catch(console.error),
+    ]).finally(() => setLoading(false))
     const timer = setInterval(() => { if (document.visibilityState === 'visible') refresh() }, POLL_MS)
     const onFocus = () => refresh()
     window.addEventListener('focus', onFocus)
@@ -118,7 +142,7 @@ export default function FoodLog() {
       clearInterval(timer)
       window.removeEventListener('focus', onFocus)
     }
-  }, [refresh])
+  }, [refresh, applyDevices])
 
   const days = useMemo(() => {
     const byDay = new Map<string, IntakeRecord[]>()
@@ -187,11 +211,12 @@ export default function FoodLog() {
     setBusy(true)
     try {
       const device = await claimPairingCode(digits, deviceName.trim())
-      setDevices((ds) => [...ds, device])
       setPairing(false)
       pushToast(`${device.name} paired — it will finish setting up by itself.`, 'success')
-      // The device collects its key within a few seconds; refresh to show it connected
-      setTimeout(() => { getDevices().then(setDevices).catch(console.error) }, 8000)
+      // Re-fetch rather than append: pairing the same device again replaces
+      // its old record, which should just disappear, not be announced.
+      // Polling then shows "connected" once the device collects its key.
+      await getDevices().then((ds) => applyDevices(ds, false)).catch(console.error)
     } catch (err: unknown) {
       pushToast(err instanceof Error ? err.message : 'Failed to pair device')
     } finally {
@@ -204,7 +229,7 @@ export default function FoodLog() {
     setBusy(true)
     try {
       const created = await createDevice(deviceName.trim())
-      setDevices((ds) => [...ds, { id: created.id, name: created.name, keyPrefix: created.keyPrefix, createdAt: created.createdAt, lastSeenAt: null, awaitingDevice: false }])
+      applyDevices([...devicesRef.current, { id: created.id, name: created.name, keyPrefix: created.keyPrefix, createdAt: created.createdAt, lastSeenAt: null, awaitingDevice: false }], false)
       setPairing(false)
       setNewDevice(created)
     } catch (err: unknown) {
@@ -218,7 +243,7 @@ export default function FoodLog() {
     setBusy(true)
     try {
       await revokeDevice(d.id)
-      setDevices((ds) => ds.filter((x) => x.id !== d.id))
+      applyDevices(devicesRef.current.filter((x) => x.id !== d.id), false)
       setConfirmRevoke(null)
     } catch (err: unknown) {
       pushToast(err instanceof Error ? err.message : 'Failed to remove device')
