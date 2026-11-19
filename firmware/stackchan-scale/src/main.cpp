@@ -18,6 +18,7 @@
 
 #include <M5Unified.h>
 #include <WiFi.h>
+#include <algorithm>
 #include <WiFiClientSecure.h>
 #include <HTTPClient.h>
 #include <ArduinoJson.h>
@@ -68,29 +69,33 @@ static constexpr int MSG_Y = PREV_H;                   // strip under the image,
 static constexpr int TARE_X = PANEL_X + 6, TARE_Y = MSG_Y + 6, TARE_W = PANEL_W - 12, TARE_H = 48;
 static constexpr int GEAR_X = TARE_X, GEAR_Y = TARE_Y - 46, GEAR_W = TARE_W, GEAR_H = 38;
 
-// Settings screen (gear): brightness in the strip under the image, head
-// control and power in the right column, live camera view kept for aiming
+// Settings screen (gear): full screen, one row per setting, Back in the
+// top-right corner. No camera view: aiming is done on the main screen.
 struct Rect { int x, y, w, h; };
-static constexpr Rect BTN_DONE  = {PANEL_X + 6, 6, PANEL_W - 12, 34};
-static constexpr Rect BTN_WIFI  = {PANEL_X + 6, 46, PANEL_W - 12, 34};
-static constexpr Rect BTN_CENTER = {PANEL_X + 6, 142, PANEL_W - 12, 34};
+static constexpr Rect BTN_SET_BACK = {LCD_W - 78, 6, 72, 30};
+static constexpr int SET_ROW_Y = 44, SET_ROW_STEP = 39, SET_ROW_H = 35;
+static constexpr Rect setRow(int i) { return {6, SET_ROW_Y + i * SET_ROW_STEP, LCD_W - 12, SET_ROW_H}; }
+// Button at the right end of row i
+static constexpr Rect setRowButton(int i) { return {LCD_W - 6 - 86, SET_ROW_Y + i * SET_ROW_STEP + 3, 82, SET_ROW_H - 6}; }
+enum SetRow { ROW_LIGHT, ROW_WIFI, ROW_ACCOUNT, ROW_HEAD, ROW_POWER };
+static constexpr int SET_LABEL_X = 14, SET_VALUE_X = 86;
+// Brightness slider in the first row
+static constexpr int SLIDER_X = SET_VALUE_X + 8, SLIDER_W = LCD_W - 6 - 54 - SLIDER_X;
 // On-device Wi-Fi: network list (4 rows per page), keyboard, connecting
-static constexpr int WL_ROW_Y = 32, WL_ROW_H = 38, WL_ROWS = 4;
-static constexpr Rect BTN_WL_UP    = {LCD_W - 40, 32, 34, 72};
-static constexpr Rect BTN_WL_DOWN  = {LCD_W - 40, 110, 34, 72};
-static constexpr Rect BTN_WL_RESCAN = {4, LCD_H - 42, 74, 38};
-static constexpr Rect BTN_WL_PHONE  = {82, LCD_H - 42, 74, 38};
-static constexpr Rect BTN_WL_RESET  = {160, LCD_H - 42, 74, 38};
-static constexpr Rect BTN_WL_EXIT   = {238, LCD_H - 42, 78, 38};
+// Scrollable list between the title and the bottom buttons; the tapped row
+// opens to show its actions (connect, disconnect, password, forget)
+static constexpr int WL_ROW_Y = 44, WL_VIEW_H = LCD_H - 46 - WL_ROW_Y;
+static constexpr int WL_ROW_H = 38, WL_CARD_H = 34, WL_EXP_H = 42;
+static constexpr int WL_X = 6, WL_W = LCD_W - 18;  // room for the scroll bar
+static constexpr Rect BTN_WL_RESCAN = {4, LCD_H - 42, (LCD_W - 14) / 2, 38};
+static constexpr Rect BTN_WL_PHONE  = {10 + (LCD_W - 14) / 2, LCD_H - 42, (LCD_W - 14) / 2, 38};
 static constexpr int KB_Y = 62, KB_KEY_H = 42;   // keyboard rows at 62, 106, 150, 194
 static constexpr Rect BTN_JOIN_RETYPE = {4, LCD_H - 46, 100, 40};
 static constexpr Rect BTN_JOIN_SAVE   = {110, LCD_H - 46, 100, 40};
 static constexpr Rect BTN_JOIN_BACK   = {216, LCD_H - 46, 100, 40};
 // Phone-portal screen and pairing screen
-static constexpr Rect BTN_SETUP_EXIT  = {LCD_W - 80, LCD_H - 42, 74, 36};
-static constexpr Rect BTN_SETUP_RESET = {LCD_W - 160, LCD_H - 42, 74, 36};
+static constexpr Rect BTN_SETUP_EXIT  = {LCD_W - 78, 6, 72, 30};  // same place as Settings' Back
 static constexpr Rect BTN_PAIR_WIFI   = {LCD_W - 80, LCD_H - 42, 74, 36};
-static constexpr Rect BTN_POWER = {PANEL_X + 6, MSG_Y + 6, PANEL_W - 12, 48};
 // Aim joystick on the main screen: tap the camera view to show it in the
 // middle, drag the knob to turn the head (further = faster), let go to stop.
 static constexpr Rect PREVIEW_AREA = {0, 0, PREV_W, PREV_H};
@@ -106,10 +111,8 @@ static constexpr uint32_t AIM_HIDE_MS = 5000;  // hide after this long untouched
 static constexpr uint16_t BTN_GREY = 0x39E7;   // same as the gear button
 static constexpr uint8_t JOY_BASE_ALPHA = 110; // 0..255 opacity
 static constexpr uint8_t JOY_KNOB_ALPHA = 200;
-static constexpr Rect BTN_DIM   = {70, MSG_Y + 6, 48, 48};
-static constexpr Rect BTN_BRIGHT = {184, MSG_Y + 6, 48, 48};
 static constexpr int HOME_PITCH = head::PITCH_MIN;  // Home = facing forward, lowest tilt (also the first-boot pose)
-static constexpr int BRIGHT_STEP = 25, BRIGHT_MIN = 10, BRIGHT_MAX = 255;
+static constexpr int BRIGHT_MIN = 10, BRIGHT_MAX = 255;
 
 // Scale zeroing
 static constexpr float ZERO_BAND        = 0.5f;   // reading must stay within this (g)...
@@ -151,13 +154,20 @@ static Mode mode = Mode::Normal;
 // Device key from pairing, stored in NVS namespace "dev"
 static String deviceKey;
 static String ownerName;  // account this device logs meals to (from pairing)
+static Rect accountTagRect = {0, 0, 0, 0};  // where the tag was last drawn (tap target)
+static bool accountMenuOpen = false;
+static uint32_t unpairArmedUntil = 0;       // Unpair needs a second tap
 
 // On-device Wi-Fi setup
 enum class WifiScreen { List, Password, Joining, Phone };
 static WifiScreen wifiScreen = WifiScreen::List;
 static std::vector<net::Network> wifiList;
 static bool wifiScanning = false;
-static int wifiPage = 0;
+static int wifiScroll = 0;              // list scroll offset, px
+static int wifiSel = -1;                // opened row, or -1
+static uint32_t forgetArmedUntil = 0;   // Forget needs a second tap
+static bool listTouching = false, listDragged = false;
+static int listStartX = 0, listStartY = 0, listStartScroll = 0;
 static String chosenSsid, typedPass, kbNote;
 static int kbLayer = 0;                 // 0 lower, 1 upper, 2 digits & symbols
 static net::JoinState joinResult = net::JoinState::Trying;
@@ -165,11 +175,11 @@ static uint32_t joinShownAt = 0;
 static constexpr uint32_t JOIN_TIMEOUT_MS = 20000;
 
 static void enterWifiSetup();  // defined with the Wi-Fi setup screens
+static void unpairDevice();     // defined with the account check
 
 // Pairing-code flow
 static String pairCode, pairToken, pairMsg;
 static uint32_t pairExpiresAt = 0, nextPairPoll = 0;
-static uint32_t resetArmedUntil = 0;
 
 enum class State { Idle, Settling, Uploading, Result, Error };
 // Steps inside State::Uploading, shown on screen
@@ -190,6 +200,7 @@ static bool aimVisible = false;
 static uint32_t aimLastTap = 0;
 static int savedYaw = 0, savedPitch = 0;  // what's in NVS, to skip needless writes
 
+static bool headGliding = false;  // Center's eased move in progress
 static bool atHome() { return headYaw == 0 && headPitch == HOME_PITCH; }
 
 // "12.5" from tenths of a degree, so small offsets are visible
@@ -208,6 +219,9 @@ static uint32_t lastJoyMove = 0;
 static bool tapped(const Rect& r) {
     return tapNow && tapX >= r.x && tapX < r.x + r.w && tapY >= r.y && tapY < r.y + r.h;
 }
+
+static bool sliderDragging = false;  // finger on the brightness slider
+static bool wifiFromSettings = false; // Wi-Fi setup was opened from Settings
 
 static State state = State::Idle;
 static float weight = 0;
@@ -480,63 +494,130 @@ static void drawJoystick() {
     canvas.drawCircle(kx, ky, JOY_KNOB_R, TFT_WHITE);
 }
 
-static void drawSettings() {
-    // Brightness row under the image
-    canvas.fillRect(0, MSG_Y, PREV_W, LCD_H - MSG_Y, 0x18E3);
-    canvas.setTextDatum(middle_left);
+// Whose account meals go to: a translucent tag in the image's top-left
+// corner. Tapping it opens the account card (with Unpair).
+static void drawAccountTag() {
+    accountTagRect = {0, 0, 0, 0};
+    if (deviceKey.isEmpty()) return;
+    // Devices paired before usernames were sent learn theirs from the account check
+    String label = ownerName.isEmpty() ? String("Paired") : ownerName;
     canvas.setFont(&fonts::Font2);
+    const int x = 6, y = 6, h = 22;
+    int tw = min((int)canvas.textWidth(label), PREV_W / 2);
+    accountTagRect = {x, y, tw + 32, h};
+    fillRoundRectAlpha(accountTagRect, h / 2, TFT_BLACK, 150);
+    // Person icon
+    canvas.fillCircle(x + 13, y + 8, 4, TFT_LIGHTGREY);
+    canvas.fillRoundRect(x + 7, y + 13, 13, 7, 3, TFT_LIGHTGREY);
     canvas.setTextColor(TFT_WHITE);
-    canvas.drawString("Light", 10, MSG_Y + 30);
-    drawButton(BTN_DIM, "-", 0x2C4A, brightness > BRIGHT_MIN);
-    drawButton(BTN_BRIGHT, "+", 0x2C4A, brightness < BRIGHT_MAX);
-    canvas.setTextDatum(middle_center);
+    drawFit(label, x + 24, y + h / 2, tw, middle_left);
+}
+
+static constexpr Rect ACCOUNT_CARD = {14, 34, PREV_W - 28, 116};
+static constexpr Rect BTN_UNPAIR = {ACCOUNT_CARD.x + 10, ACCOUNT_CARD.y + ACCOUNT_CARD.h - 44,
+                                    (ACCOUNT_CARD.w - 30) / 2, 34};
+static constexpr Rect BTN_ACCOUNT_CLOSE = {BTN_UNPAIR.x + BTN_UNPAIR.w + 10, BTN_UNPAIR.y, BTN_UNPAIR.w, 34};
+
+static void drawAccountMenu() {
+    if (!accountMenuOpen) return;
+    const Rect& c = ACCOUNT_CARD;
+    fillRoundRectAlpha(c, 10, TFT_BLACK, 210);
+    canvas.drawRoundRect(c.x, c.y, c.w, c.h, 10, 0x4208);
+    canvas.setTextDatum(top_left);
+    canvas.setFont(&fonts::Font2);
+    canvas.setTextColor(TFT_LIGHTGREY);
+    canvas.drawString("Logging meals for", c.x + 12, c.y + 10);
     canvas.setFont(&fonts::Font4);
-    canvas.drawString(String(brightness * 100 / 255) + "%", 151, MSG_Y + 30);
+    canvas.setTextColor(TFT_WHITE);
+    drawFit(ownerName.isEmpty() ? String("(checking...)") : ownerName, c.x + 12, c.y + 30, c.w - 24, top_left);
+    bool armed = millis() < unpairArmedUntil;
+    drawButton(BTN_UNPAIR, armed ? "Sure?" : "Unpair", armed ? (uint16_t)0xF800 : (uint16_t)0x9000);
+    drawButton(BTN_ACCOUNT_CLOSE, "Close", 0x2C4A);
+}
 
-    // Whose account meals go to (devices paired before this was added don't know)
-    if (!ownerName.isEmpty()) {
-        canvas.fillRoundRect(4, 4, PREV_W - 8, 22, 6, 0x18E3);
-        canvas.setFont(&fonts::Font2);
-        canvas.setTextColor(TFT_LIGHTGREY);
-        drawFit("Account: " + ownerName, 10, 15, PREV_W - 20, middle_left);
-    }
-
-    bool h = head::ok();
-
-    // Right column: done, Wi-Fi, head angles, home, power
-    const int cx = PANEL_X + PANEL_W / 2;
-    canvas.fillRect(PANEL_X, 0, PANEL_W, LCD_H, 0x10A2);
-    drawButton(BTN_DONE, "Done", 0x2C4A);
-    drawButton(BTN_WIFI, "Wi-Fi", 0x2C4A);
-    canvas.setTextDatum(middle_center);
-    canvas.setFont(&fonts::Font0);
-    if (h) {
-        canvas.setTextColor(TFT_LIGHTGREY);
-        canvas.drawString("HEAD", cx, 90);
-        canvas.setFont(&fonts::Font2);
+// One settings row: card, label on the left, value after it
+static void drawSettingRow(int i, const char* label, const String& value, int valueW) {
+    Rect r = setRow(i);
+    canvas.fillRoundRect(r.x, r.y, r.w, r.h, 8, 0x2945);
+    canvas.setFont(&fonts::Font2);
+    canvas.setTextDatum(middle_left);
+    canvas.setTextColor(TFT_LIGHTGREY);
+    canvas.drawString(label, SET_LABEL_X, r.y + r.h / 2);
+    if (value.length()) {
         canvas.setTextColor(TFT_WHITE);
-        canvas.drawString("tilt " + fmtTenths(headPitch), cx, 106);
-        canvas.drawString("turn " + fmtTenths(headYaw), cx, 124);
-    } else {
-        canvas.setTextColor(TFT_ORANGE);
-        canvas.drawString("NO SERVOS", cx, 110);
+        drawFit(value, SET_VALUE_X, r.y + r.h / 2, valueW, middle_left);
     }
-    drawButton(BTN_CENTER, "Home", 0x2C4A, h && !atHome());
-    bool armed = millis() < powerArmedUntil;
-    drawButton(BTN_POWER, armed ? "Sure?" : "Power", armed ? (uint16_t)0xF800 : (uint16_t)0x9000);
+}
+
+static void drawSettings() {
+    accountTagRect = {0, 0, 0, 0};  // the tag isn't on this screen
+    canvas.fillSprite(0x10A2);
+    canvas.setTextDatum(middle_left);
+    canvas.setFont(&fonts::Font4);
+    canvas.setTextColor(TFT_WHITE);
+    canvas.drawString("Settings", 10, 21);
+    drawButton(BTN_SET_BACK, "Back", 0x2C4A);
+
+    const int fullW = LCD_W - 6 - 10 - SET_VALUE_X;      // value with nothing after it
+    const int besideBtnW = setRowButton(0).x - 8 - SET_VALUE_X;
+
+    // Brightness: drag the slider
+    drawSettingRow(ROW_LIGHT, "Light", "", 0);
+    {
+        Rect r = setRow(ROW_LIGHT);
+        int cy = r.y + r.h / 2;
+        int knobX = SLIDER_X + (brightness - BRIGHT_MIN) * SLIDER_W / (BRIGHT_MAX - BRIGHT_MIN);
+        canvas.fillRoundRect(SLIDER_X, cy - 3, SLIDER_W, 6, 3, 0x4208);
+        canvas.fillRoundRect(SLIDER_X, cy - 3, knobX - SLIDER_X, 6, 3, TFT_GREEN);
+        canvas.fillCircle(knobX, cy, sliderDragging ? 10 : 8, TFT_WHITE);
+        canvas.setFont(&fonts::Font2);
+        canvas.setTextDatum(middle_right);
+        canvas.setTextColor(TFT_WHITE);
+        canvas.drawString(String(brightness * 100 / 255) + "%", LCD_W - 14, cy);
+    }
+
+    // Wi-Fi: whole row opens the network list
+    String wifi = WiFi.status() == WL_CONNECTED ? WiFi.SSID()
+                : net::isOffByUser() ? String("Disconnected") : String("Not connected");
+    drawSettingRow(ROW_WIFI, "Wi-Fi", wifi, fullW - 14);
+    {
+        Rect r = setRow(ROW_WIFI);
+        canvas.setTextDatum(middle_right);
+        canvas.setTextColor(TFT_LIGHTGREY);
+        canvas.drawString(">", r.x + r.w - 10, r.y + r.h / 2);
+    }
+
+    // Account, with Unpair (two taps)
+    drawSettingRow(ROW_ACCOUNT, "Account", ownerName.isEmpty() ? String("(checking...)") : ownerName, besideBtnW);
+    bool unpairArmed = millis() < unpairArmedUntil;
+    drawButton(setRowButton(ROW_ACCOUNT), unpairArmed ? "Sure?" : "Unpair",
+               unpairArmed ? (uint16_t)0xF800 : (uint16_t)0x9000);
+
+    // Head: current angles (moved with the joystick on the main screen), Center
+    bool h = head::ok();
+    drawSettingRow(ROW_HEAD, "Head", h ? "tilt " + fmtTenths(headPitch) + "  turn " + fmtTenths(headYaw)
+                                       : String("No servos"), besideBtnW);
+    drawButton(setRowButton(ROW_HEAD), "Center", 0x2C4A, h && !atHome() && !headGliding);
+
+    // Power (two taps)
+    drawSettingRow(ROW_POWER, "Power", "Battery " + String(M5.Power.getBatteryLevel()) + "%", besideBtnW);
+    bool powerArmed = millis() < powerArmedUntil;
+    drawButton(setRowButton(ROW_POWER), powerArmed ? "Sure?" : "Turn off",
+               powerArmed ? (uint16_t)0xF800 : (uint16_t)0x9000);
 }
 
 static void drawScreen() {
-    if (cameraOk) {
-        canvas.pushImage(0, 0, PREV_W, PREV_H, preview);
-    } else {
-        canvas.fillRect(0, 0, PREV_W, PREV_H, TFT_BLACK);
-    }
     if (settingsOpen) {
         drawSettings();
         canvas.pushSprite(0, 0);
         return;
     }
+    if (cameraOk) {
+        canvas.pushImage(0, 0, PREV_W, PREV_H, preview);
+    } else {
+        canvas.fillRect(0, 0, PREV_W, PREV_H, TFT_BLACK);
+    }
+    drawAccountTag();
 
     bool online = WiFi.status() == WL_CONNECTED;
     switch (state) {
@@ -587,6 +668,7 @@ static void drawScreen() {
 
     if (aimVisible) drawJoystick();
     drawPanel();  // last, so long message text can't spill into the column
+    drawAccountMenu();
     canvas.pushSprite(0, 0);
 }
 
@@ -596,7 +678,13 @@ static void saveHead() {
     if (headPitch != savedPitch) prefs.putInt("pitch", savedPitch = headPitch);
 }
 
+// Gentle move for Center: eased over ~0.4-1.6s instead of the servos' full
+// speed, which snapped the head round fast enough to startle
+static int glideFromYaw, glideFromPitch, glideToYaw, glideToPitch;
+static uint32_t glideStart, glideMs;
+
 static void moveHeadTo(int yaw, int pitch) {
+    headGliding = false;  // a manual move (joystick) takes over
     if (!head::ok()) return;
     yaw = constrain(yaw, head::YAW_MIN, head::YAW_MAX);
     pitch = constrain(pitch, head::PITCH_MIN, head::PITCH_MAX);
@@ -607,6 +695,35 @@ static void moveHeadTo(int yaw, int pitch) {
 }
 
 static void moveHead(int dYaw, int dPitch) { moveHeadTo(headYaw + dYaw, headPitch + dPitch); }
+
+static void glideHeadTo(int yaw, int pitch) {
+    if (!head::ok()) return;
+    yaw = constrain(yaw, head::YAW_MIN, head::YAW_MAX);
+    pitch = constrain(pitch, head::PITCH_MIN, head::PITCH_MAX);
+    int dist = max(abs(yaw - headYaw), abs(pitch - headPitch));  // tenths of a degree
+    if (dist == 0) return;
+    glideFromYaw = headYaw;
+    glideFromPitch = headPitch;
+    glideToYaw = yaw;
+    glideToPitch = pitch;
+    glideStart = millis();
+    glideMs = constrain(dist * 3 / 2, 400, 1600);  // 90 degrees in about 1.4s
+    headGliding = true;
+}
+
+// Called every loop: steps the head along the glide (smoothstep easing)
+static void updateHeadGlide() {
+    if (!headGliding) return;
+    float t = (millis() - glideStart) / (float)glideMs;
+    if (t >= 1) {
+        t = 1;
+        headGliding = false;
+    }
+    float e = t * t * (3 - 2 * t);
+    headYaw = glideFromYaw + (int)lroundf((glideToYaw - glideFromYaw) * e);
+    headPitch = glideFromPitch + (int)lroundf((glideToPitch - glideFromPitch) * e);
+    head::setPose(headYaw, headPitch);
+}
 
 static void hideAim() {
     aimVisible = false;
@@ -667,28 +784,50 @@ static void handleJoystick() {
 }
 
 // Settings screen taps. Changes apply immediately; NVS is written on Done.
+static void closeSettings() {
+    settingsOpen = false;
+    sliderDragging = false;
+    prefs.putInt("bright", brightness);
+    saveHead();
+}
+
 static void handleSettingsTap() {
-    if (tapped(BTN_DONE)) {
-        settingsOpen = false;
-        prefs.putInt("bright", brightness);
-        saveHead();
+    // Brightness slider: follows the finger, saved on release
+    Rect light = setRow(ROW_LIGHT);
+    if (tapped({SLIDER_X - 14, light.y, SLIDER_W + 28, light.h})) sliderDragging = true;
+    if (sliderDragging) {
+        if (touchHeld) {
+            int x = constrain(tapX, SLIDER_X, SLIDER_X + SLIDER_W);
+            int b = BRIGHT_MIN + (x - SLIDER_X) * (BRIGHT_MAX - BRIGHT_MIN) / SLIDER_W;
+            if (b != brightness) {
+                brightness = b;
+                M5.Display.setBrightness(brightness);
+            }
+        } else {
+            sliderDragging = false;
+            prefs.putInt("bright", brightness);
+        }
         return;
     }
-    if (tapped(BTN_DIM) || tapped(BTN_BRIGHT)) {
-        brightness = constrain(brightness + (tapped(BTN_BRIGHT) ? BRIGHT_STEP : -BRIGHT_STEP), BRIGHT_MIN, BRIGHT_MAX);
-        M5.Display.setBrightness(brightness);
-    }
-    if (tapped(BTN_WIFI)) {
-        prefs.putInt("bright", brightness);
-        saveHead();
+
+    if (tapped(BTN_SET_BACK)) {
+        closeSettings();
+    } else if (tapped(setRow(ROW_WIFI))) {
+        closeSettings();
         enterWifiSetup();
-        return;
-    }
-    if (tapped(BTN_CENTER)) {
-        moveHeadTo(0, HOME_PITCH);
-        Serial.println("Head: home");
-    }
-    if (tapped(BTN_POWER)) {
+        wifiFromSettings = true;
+    } else if (tapped(setRowButton(ROW_ACCOUNT))) {
+        if (millis() < unpairArmedUntil) {
+            Serial.println("Unpair tapped");
+            closeSettings();
+            unpairDevice();
+        } else {
+            unpairArmedUntil = millis() + 3000;
+        }
+    } else if (tapped(setRowButton(ROW_HEAD))) {
+        glideHeadTo(0, HOME_PITCH);
+        Serial.println("Head: center");
+    } else if (tapped(setRowButton(ROW_POWER))) {
         if (millis() < powerArmedUntil) {
             Serial.println("Powering off");
             prefs.putInt("bright", brightness);
@@ -807,6 +946,14 @@ static void saveDeviceKey(const String& key, const String& owner) {
     ownerName = owner;
 }
 
+static void saveOwnerName(const String& owner) {
+    Preferences p;
+    p.begin("dev", false);
+    p.putString("owner", owner);
+    p.end();
+    ownerName = owner;
+}
+
 static void clearDeviceKey() {
     Preferences p;
     p.begin("dev", false);
@@ -818,12 +965,143 @@ static void clearDeviceKey() {
     Serial.println("Device key cleared");
 }
 
+// ---------------------------------------------------------------- account check
+
+// Asks the backend whose account this key belongs to; a 401 means the device
+// was removed on the website. Runs in its own task because a cold backend
+// (scaled to zero) takes 20-30s to answer and the screen must stay live.
+// Not a frequent heartbeat: every request wakes the backend and database,
+// which then stay billed for several minutes.
+static constexpr uint32_t ACCOUNT_CHECK_MS = 6UL * 60 * 60 * 1000;  // when idle
+static constexpr uint32_t ACCOUNT_RECHECK_MIN_MS = 60 * 1000;        // on opening settings
+static volatile bool accountCheckBusy = false;
+static volatile int accountCheckResult = 0;  // HTTP status of a finished check, 0 = none
+static String accountCheckUser;              // set by the task before accountCheckResult
+static bool accountChecked = false;
+static uint32_t lastAccountCheck = 0;
+
+static void accountCheckTask(void* arg) {
+    String* key = (String*)arg;
+    String user;
+    int code = -1;
+    {
+        HTTPClient http;
+        WiFiClient plain;
+        WiFiClientSecure secure;
+        if (beginHttp(http, plain, secure, String(API_BASE_URL) + "/api/device/me")) {
+            http.setTimeout(HTTP_TIMEOUT);
+            http.addHeader("X-Device-Key", *key);
+            code = http.GET();
+            JsonDocument doc;
+            if (code == 200 && !deserializeJson(doc, http.getString()))
+                user = (const char*)(doc["username"] | "");
+            http.end();
+        }
+    }
+    delete key;
+    accountCheckUser = user;
+    accountCheckResult = code == 0 ? -1 : code;
+    accountCheckBusy = false;
+    vTaskDelete(nullptr);
+}
+
+// Tells the backend to revoke this device's key (DELETE /api/device/me), so
+// the website stops listing it. Best effort: offline, it's only forgotten here.
+static volatile bool unpairBusy = false;
+
+static void unpairTask(void* arg) {
+    String* key = (String*)arg;
+    int code = -1;
+    {
+        HTTPClient http;
+        WiFiClient plain;
+        WiFiClientSecure secure;
+        if (beginHttp(http, plain, secure, String(API_BASE_URL) + "/api/device/me")) {
+            http.setTimeout(HTTP_TIMEOUT);
+            http.addHeader("X-Device-Key", *key);
+            code = http.sendRequest("DELETE");
+            http.end();
+        }
+    }
+    Serial.printf("Unpair: server answered %d\n", code);
+    delete key;
+    unpairBusy = false;
+    vTaskDelete(nullptr);
+}
+
+static void unpairDevice() {
+    String key = deviceKey;
+    clearDeviceKey();  // the main loop now switches to the pairing screen
+    if (key.isEmpty() || WiFi.status() != WL_CONNECTED || unpairBusy) return;
+    unpairBusy = true;
+    String* arg = new String(key);
+    if (xTaskCreate(unpairTask, "unpair", 12288, arg, 1, nullptr) != pdPASS) {
+        delete arg;
+        unpairBusy = false;
+    }
+}
+
+static void startAccountCheck() {
+    if (accountCheckBusy || deviceKey.isEmpty() || WiFi.status() != WL_CONNECTED || state == State::Uploading)
+        return;
+    accountCheckBusy = true;
+    accountChecked = true;
+    lastAccountCheck = millis();
+    if (xTaskCreate(accountCheckTask, "account", 12288, new String(deviceKey), 1, nullptr) != pdPASS) {
+        accountCheckBusy = false;
+        Serial.println("Account check: no memory for task");
+    }
+}
+
+static void accountLoop() {
+    int code = accountCheckResult;
+    if (code != 0) {
+        accountCheckResult = 0;
+        Serial.printf("Account check: %d '%s'\n", code, accountCheckUser.c_str());
+        if (code == 200 && !accountCheckUser.isEmpty() && accountCheckUser != ownerName)
+            saveOwnerName(accountCheckUser);
+        else if (code == 401 && !deviceKey.isEmpty())
+            clearDeviceKey();  // removed on the website: the loop switches to pairing
+    }
+    // Once after boot, then every few hours
+    if (!accountChecked || millis() - lastAccountCheck >= ACCOUNT_CHECK_MS) startAccountCheck();
+}
+
 // ---------------------------------------------------------------- pairing code
 
-// Ask the backend for a fresh 6-digit code; the private token stays here
-static void startPairing() {
+// Pairing requests run in a background task: a cold backend (scaled to zero)
+// takes 20-30s to answer, and the screen and its Wi-Fi button must stay live.
+// Results are only handled from pairingLoop, i.e. while in Mode::Pairing.
+static volatile bool pairBusy = false, pairDone = false;
+static bool pairReqIsStart = false;
+static String pairReqPath, pairReqBody, pairReqResponse;
+static int pairReqCode = 0;
+
+static void pairTask(void*) {
     String resp;
-    int code = postJson("/api/device/pairing/start", "{\"name\":\"Stack-chan\"}", resp);
+    int code = postJson(pairReqPath.c_str(), pairReqBody, resp);
+    pairReqResponse = resp;
+    pairReqCode = code;
+    pairDone = true;
+    pairBusy = false;
+    vTaskDelete(nullptr);
+}
+
+static void startPairRequest(bool isStart, const String& path, const String& body) {
+    pairReqIsStart = isStart;
+    pairReqPath = path;
+    pairReqBody = body;
+    pairDone = false;
+    pairBusy = true;
+    if (xTaskCreate(pairTask, "pair", 12288, nullptr, 1, nullptr) != pdPASS) {
+        pairBusy = false;
+        nextPairPoll = millis() + 5000;
+        Serial.println("Pairing: no memory for task");
+    }
+}
+
+// Got a fresh 6-digit code; the private token stays here
+static void onPairStart(int code, const String& resp) {
     JsonDocument doc;
     if (code == 200 && !deserializeJson(doc, resp)) {
         pairCode = (const char*)(doc["code"] | "");
@@ -841,11 +1119,8 @@ static void startPairing() {
     }
 }
 
-// Check whether someone has entered our code on the website yet
-static void pollPairing() {
-    String body = String("{\"pairingToken\":\"") + pairToken + "\"}";
-    String resp;
-    int code = postJson("/api/device/pairing/poll", body, resp);
+// Has someone entered our code on the website yet?
+static void onPairPoll(int code, const String& resp) {
     JsonDocument doc;
     if (code != 200 || deserializeJson(doc, resp)) {
         pairMsg = "Server unreachable, retrying...";
@@ -858,6 +1133,8 @@ static void pollPairing() {
     if (status == "paired") {
         String owner = doc["username"] | "";
         saveDeviceKey(String((const char*)(doc["key"] | "")), owner);
+        accountChecked = true;
+        lastAccountCheck = millis();
         String name = doc["deviceName"] | "Stack-chan";
         Serial.printf("Pairing: done, now '%s' for '%s'\n", name.c_str(), owner.c_str());
         pairCode = pairToken = "";
@@ -875,10 +1152,20 @@ static void pollPairing() {
 }
 
 static void pairingLoop() {
+    if (pairBusy || unpairBusy) return;  // one TLS connection at a time
+    if (pairDone) {
+        pairDone = false;
+        if (pairReqIsStart) onPairStart(pairReqCode, pairReqResponse);
+        else onPairPoll(pairReqCode, pairReqResponse);
+        return;
+    }
     if (WiFi.status() != WL_CONNECTED) return;
     if (millis() < nextPairPoll) return;
-    if (pairToken.isEmpty() || millis() > pairExpiresAt) startPairing();
-    else pollPairing();
+    if (pairToken.isEmpty() || millis() > pairExpiresAt)
+        startPairRequest(true, "/api/device/pairing/start",
+                         "{\"name\":\"Stack-chan\",\"hardwareId\":\"" + WiFi.macAddress() + "\"}");
+    else
+        startPairRequest(false, "/api/device/pairing/poll", String("{\"pairingToken\":\"") + pairToken + "\"}");
 }
 
 // ---------------------------------------------------------------- on-device Wi-Fi setup
@@ -887,14 +1174,15 @@ static void startWifiScan() {
     net::startScan();
     wifiScanning = true;
     wifiList.clear();
-    wifiPage = 0;
+    wifiScroll = 0;
+    wifiSel = -1;
 }
 
 static void enterWifiSetup() {
+    wifiFromSettings = false;  // set by the Settings row after calling this
     mode = Mode::WifiSetup;
     wifiScreen = WifiScreen::List;
     settingsOpen = false;
-    resetArmedUntil = 0;
     net::pause(true);  // no background reconnects while the user chooses
     startWifiScan();
 }
@@ -903,6 +1191,12 @@ static void exitWifiSetup() {
     if (net::portalActive()) net::stopPortal();
     net::pause(false);
     mode = Mode::Normal;
+    // Opened from Settings: back to Settings (unless unpaired: pairing comes first)
+    if (wifiFromSettings && !deviceKey.isEmpty()) {
+        settingsOpen = true;
+        powerArmedUntil = unpairArmedUntil = 0;
+    }
+    wifiFromSettings = false;
 }
 
 static void startJoin() {
@@ -925,102 +1219,236 @@ static void drawLock(int x, int y) {
     canvas.fillRect(x, y + 6, 12, 9, TFT_LIGHTGREY);
 }
 
+// The network we're on right now ("" when offline)
+static String connectedSsid() { return WiFi.status() == WL_CONNECTED ? WiFi.SSID() : String(); }
+
+enum class WlAction { Connect, Disconnect, Password, Forget };
+
+// What the opened row offers, depending on the network's state
+static std::vector<WlAction> wifiActions(const net::Network& n) {
+    std::vector<WlAction> a;
+    bool connected = n.ssid == connectedSsid();
+    a.push_back(connected ? WlAction::Disconnect : WlAction::Connect);
+    if (!n.open && (connected || n.saved)) a.push_back(WlAction::Password);
+    if (n.saved) a.push_back(WlAction::Forget);
+    return a;
+}
+
+static Rect wifiActionRect(int rowY, int k, int count) {
+    const int gap = 6, inner = WL_W - 16;
+    int w = (inner - gap * (count - 1)) / count;
+    return {WL_X + 8 + k * (w + gap), rowY + WL_CARD_H + 4, w, WL_EXP_H - 8};
+}
+
+// Top of row i in screen coordinates (rows below the opened one move down)
+static int wifiRowY(int i) {
+    return WL_ROW_Y + i * WL_ROW_H + (wifiSel >= 0 && i > wifiSel ? WL_EXP_H : 0) - wifiScroll;
+}
+
+static int wifiMaxScroll() {
+    int content = (int)wifiList.size() * WL_ROW_H + (wifiSel >= 0 ? WL_EXP_H : 0);
+    return max(0, content - WL_VIEW_H);
+}
+
 static void drawWifiList() {
     canvas.fillSprite(0x10A2);
-    canvas.setTextDatum(top_left);
+    String cur = connectedSsid();
+
+    // Rows first; the title and button bars are painted over whatever
+    // scrolls under them (drawFit's own clip rect rules out a list clip)
+    for (int i = 0; i < (int)wifiList.size() && !wifiScanning; i++) {
+        int y = wifiRowY(i);
+        bool open = i == wifiSel;
+        int h = WL_CARD_H + (open ? WL_EXP_H : 0);
+        if (y + h < WL_ROW_Y || y > WL_ROW_Y + WL_VIEW_H) continue;
+        const auto& n = wifiList[i];
+        bool connected = n.ssid == cur;
+        canvas.fillRoundRect(WL_X, y, WL_W, h, 6, connected ? 0x0B46 : open ? 0x3186 : 0x2945);
+        if (connected) canvas.drawRoundRect(WL_X, y, WL_W, h, 6, TFT_GREEN);
+        int right = WL_X + WL_W;
+        int midY = y + WL_CARD_H / 2;
+        canvas.setFont(&fonts::Font2);
+        canvas.setTextColor(TFT_WHITE);
+        // Name, up to the "connected"/"saved" mark, then signal bars and lock
+        int markW = connected ? 62 : n.saved ? 34 : 0;
+        drawFit(n.ssid, WL_X + 8, midY, right - 52 - markW - (WL_X + 8), middle_left);
+        if (connected || n.saved) {
+            canvas.setFont(&fonts::Font0);
+            canvas.setTextColor(TFT_GREEN);
+            canvas.setTextDatum(middle_right);
+            canvas.drawString(connected ? "connected" : "saved", right - 52, midY);
+            canvas.setFont(&fonts::Font2);
+        }
+        drawSignalBars(right - 46, y + 9, n.rssi);
+        if (!n.open) drawLock(right - 18, y + 11);
+
+        if (open) {
+            auto acts = wifiActions(n);
+            for (int k = 0; k < (int)acts.size(); k++) {
+                Rect r = wifiActionRect(y, k, acts.size());
+                bool armed = millis() < forgetArmedUntil;
+                switch (acts[k]) {
+                    case WlAction::Connect:    drawButton(r, "Connect", 0x2C4A); break;
+                    case WlAction::Disconnect: drawButton(r, "Disconnect", 0x7A00); break;
+                    case WlAction::Password:   drawButton(r, "Password", 0x2C4A); break;
+                    case WlAction::Forget:
+                        drawButton(r, armed ? "Sure?" : "Forget", armed ? (uint16_t)0xF800 : (uint16_t)0x9000);
+                        break;
+                }
+            }
+        }
+    }
+
+    // Scroll bar
+    int maxScroll = wifiMaxScroll();
+    if (maxScroll > 0 && !wifiScanning) {
+        int content = WL_VIEW_H + maxScroll;
+        int barH = max(16, WL_VIEW_H * WL_VIEW_H / content);
+        int barY = WL_ROW_Y + (WL_VIEW_H - barH) * wifiScroll / maxScroll;
+        canvas.fillRoundRect(LCD_W - 7, barY, 4, barH, 2, TFT_DARKGREY);
+    }
+
+    canvas.fillRect(0, 0, LCD_W, WL_ROW_Y - 2, 0x10A2);
+    canvas.fillRect(0, WL_ROW_Y + WL_VIEW_H, LCD_W, LCD_H - WL_ROW_Y - WL_VIEW_H, 0x10A2);
+    canvas.setTextDatum(middle_left);
     canvas.setFont(&fonts::Font4);
     canvas.setTextColor(TFT_WHITE);
-    canvas.drawString("Choose Wi-Fi", 8, 4);
+    canvas.drawString("Wi-Fi", 10, 21);
+    drawButton(BTN_SET_BACK, "Back", 0x2C4A);
 
-    int pages = max(1, ((int)wifiList.size() + WL_ROWS - 1) / WL_ROWS);
     canvas.setFont(&fonts::Font2);
-    canvas.setTextDatum(top_right);
-    canvas.setTextColor(TFT_LIGHTGREY);
-    if (!wifiScanning && !wifiList.empty()) canvas.drawString(String(wifiPage + 1) + "/" + String(pages), LCD_W - 8, 8);
-
     canvas.setTextDatum(middle_center);
     if (wifiScanning) {
         canvas.setTextColor(TFT_WHITE);
-        canvas.drawString("Scanning...", (LCD_W - 44) / 2, 110);
+        canvas.drawString("Scanning...", LCD_W / 2, 110);
     } else if (wifiList.empty()) {
         canvas.setTextColor(TFT_WHITE);
-        canvas.drawString("No networks found", (LCD_W - 44) / 2, 100);
+        canvas.drawString("No networks found", LCD_W / 2, 100);
         canvas.setTextColor(TFT_LIGHTGREY);
-        canvas.drawString("Only 2.4 GHz Wi-Fi is visible", (LCD_W - 44) / 2, 122);
-    }
-    for (int r = 0; r < WL_ROWS && !wifiScanning; r++) {
-        int i = wifiPage * WL_ROWS + r;
-        if (i >= (int)wifiList.size()) break;
-        const auto& n = wifiList[i];
-        int y = WL_ROW_Y + r * WL_ROW_H;
-        canvas.fillRoundRect(6, y, LCD_W - 52, WL_ROW_H - 4, 6, 0x2945);
-        canvas.setTextDatum(middle_left);
-        canvas.setTextColor(TFT_WHITE);
-        // Up to the "saved" mark / signal bars
-        drawFit(n.ssid, 14, y + (WL_ROW_H - 4) / 2, (n.saved ? LCD_W - 132 : LCD_W - 98) - 14, middle_left);
-        if (n.saved) {
-            canvas.setFont(&fonts::Font0);
-            canvas.setTextColor(TFT_GREEN);
-            canvas.drawString("saved", LCD_W - 128, y + (WL_ROW_H - 4) / 2);
-            canvas.setFont(&fonts::Font2);
-        }
-        drawSignalBars(LCD_W - 92, y + 8, n.rssi);
-        if (!n.open) drawLock(LCD_W - 64, y + 10);
+        canvas.drawString("Only 2.4 GHz Wi-Fi is visible", LCD_W / 2, 122);
     }
 
-    drawButton(BTN_WL_UP, "^", 0x2C4A, wifiPage > 0);
-    drawButton(BTN_WL_DOWN, "v", 0x2C4A, wifiPage < pages - 1);
     drawButton(BTN_WL_RESCAN, "Rescan", 0x2C4A, !wifiScanning);
-    drawButton(BTN_WL_PHONE, "Phone", 0x2C4A);
-    bool armed = millis() < resetArmedUntil;
-    drawButton(BTN_WL_RESET, armed ? "Sure?" : "Reset", armed ? (uint16_t)0xF800 : (uint16_t)0x9000);
-    drawButton(BTN_WL_EXIT, "Exit", 0x2C4A);
+    drawButton(BTN_WL_PHONE, "Phone setup", 0x2C4A);
     canvas.pushSprite(0, 0);
+}
+
+static bool inRect(int x, int y, const Rect& r) {
+    return x >= r.x && x < r.x + r.w && y >= r.y && y < r.y + r.h;
+}
+
+static void runWifiAction(const net::Network& n, WlAction a) {
+    chosenSsid = n.ssid;
+    kbNote = "";
+    switch (a) {
+        case WlAction::Connect:
+            if (n.open) {
+                typedPass = "";
+                startJoin();
+            } else if (n.saved) {
+                typedPass = net::savedPassword(chosenSsid);  // wrong one -> back to the keyboard
+                startJoin();
+            } else {
+                typedPass = "";
+                kbLayer = 0;
+                wifiScreen = WifiScreen::Password;
+            }
+            break;
+        case WlAction::Password:
+            typedPass = net::savedPassword(chosenSsid);  // edit the saved one ("" if none)
+            kbLayer = 0;
+            wifiScreen = WifiScreen::Password;
+            break;
+        case WlAction::Disconnect:
+            Serial.printf("Wi-Fi: disconnected from '%s' by user\n", n.ssid.c_str());
+            net::disconnect();
+            break;
+        case WlAction::Forget:
+            if (millis() < forgetArmedUntil) {
+                Serial.printf("Wi-Fi: forgot '%s'\n", n.ssid.c_str());
+                net::forget(n.ssid);
+                wifiList[wifiSel].saved = false;
+                forgetArmedUntil = 0;
+            } else {
+                forgetArmedUntil = millis() + 3000;
+            }
+            break;
+    }
+}
+
+// A tap (not a drag) inside the list
+static void handleWifiListClick(int x, int y) {
+    // Buttons of the opened row
+    if (wifiSel >= 0 && wifiSel < (int)wifiList.size()) {
+        auto acts = wifiActions(wifiList[wifiSel]);
+        int rowY = wifiRowY(wifiSel);
+        for (int k = 0; k < (int)acts.size(); k++) {
+            if (!inRect(x, y, wifiActionRect(rowY, k, acts.size()))) continue;
+            runWifiAction(wifiList[wifiSel], acts[k]);
+            return;
+        }
+    }
+    for (int i = 0; i < (int)wifiList.size(); i++) {
+        int rowY = wifiRowY(i);
+        int h = WL_CARD_H + (i == wifiSel ? WL_EXP_H : 0);
+        if (!inRect(x, y, {WL_X, rowY, WL_W, h})) continue;
+        forgetArmedUntil = 0;
+        wifiSel = wifiSel == i ? -1 : i;  // tap again to close
+        if (wifiSel >= 0) {
+            // Scroll so the opened row, with its buttons, is fully visible
+            int top = i * WL_ROW_H, bottom = top + WL_CARD_H + WL_EXP_H;
+            if (bottom - wifiScroll > WL_VIEW_H) wifiScroll = bottom - WL_VIEW_H;
+            if (top < wifiScroll) wifiScroll = top;
+        }
+        wifiScroll = constrain(wifiScroll, 0, wifiMaxScroll());
+        return;
+    }
+    wifiSel = -1;  // empty space closes the opened row
+    wifiScroll = constrain(wifiScroll, 0, wifiMaxScroll());
 }
 
 static void handleWifiListTap() {
     if (wifiScanning && net::scanDone()) {
         wifiScanning = false;
         wifiList = net::scanResults();
+        // Current network first (added if the scan happened to miss it)
+        String cur = connectedSsid();
+        if (cur.length()) {
+            auto it = std::find_if(wifiList.begin(), wifiList.end(),
+                                   [&](const net::Network& n) { return n.ssid == cur; });
+            net::Network c = it != wifiList.end() ? *it : net::Network{cur, (int)WiFi.RSSI(), false, true};
+            if (it != wifiList.end()) wifiList.erase(it);
+            wifiList.insert(wifiList.begin(), c);
+        }
     }
-    if (!tapNow) return;
 
-    for (int r = 0; r < WL_ROWS && !wifiScanning; r++) {
-        int i = wifiPage * WL_ROWS + r;
-        if (i >= (int)wifiList.size()) break;
-        if (!tapped({6, WL_ROW_Y + r * WL_ROW_H, LCD_W - 52, WL_ROW_H - 4})) continue;
-        chosenSsid = wifiList[i].ssid;
-        kbNote = "";
-        if (wifiList[i].open) {
-            typedPass = "";
-            startJoin();
-        } else if (wifiList[i].saved) {
-            typedPass = net::savedPassword(chosenSsid);  // wrong one -> back to the keyboard
-            startJoin();
+    // List: drag to scroll; a press released without moving is a tap
+    if (tapNow && tapY >= WL_ROW_Y && tapY < WL_ROW_Y + WL_VIEW_H && !wifiScanning) {
+        listTouching = true;
+        listDragged = false;
+        listStartX = tapX;
+        listStartY = tapY;
+        listStartScroll = wifiScroll;
+        return;
+    }
+    if (listTouching) {
+        if (touchHeld) {
+            int dy = tapY - listStartY;
+            if (abs(dy) > 8) listDragged = true;
+            if (listDragged) wifiScroll = constrain(listStartScroll - dy, 0, wifiMaxScroll());
         } else {
-            typedPass = "";
-            kbLayer = 0;
-            wifiScreen = WifiScreen::Password;
+            listTouching = false;
+            if (!listDragged) handleWifiListClick(listStartX, listStartY);
         }
         return;
     }
-    int pages = max(1, ((int)wifiList.size() + WL_ROWS - 1) / WL_ROWS);
-    if (tapped(BTN_WL_UP) && wifiPage > 0) wifiPage--;
-    else if (tapped(BTN_WL_DOWN) && wifiPage < pages - 1) wifiPage++;
-    else if (tapped(BTN_WL_RESCAN) && !wifiScanning) startWifiScan();
+
+    if (!tapNow) return;
+    if (tapped(BTN_WL_RESCAN) && !wifiScanning) startWifiScan();
     else if (tapped(BTN_WL_PHONE)) {
         wifiScreen = WifiScreen::Phone;
         net::startPortal();
-    } else if (tapped(BTN_WL_RESET)) {
-        if (millis() < resetArmedUntil) {
-            net::forgetAll();
-            clearDeviceKey();
-            resetArmedUntil = 0;
-            startWifiScan();  // refresh the "saved" marks
-        } else {
-            resetArmedUntil = millis() + 3000;
-        }
-    } else if (tapped(BTN_WL_EXIT)) {
+    } else if (tapped(BTN_SET_BACK)) {
         exitWifiSetup();
     }
 }
@@ -1183,7 +1611,7 @@ static void drawSetupScreen() {
     canvas.setTextColor(TFT_WHITE);
     canvas.setTextDatum(top_left);
     canvas.setFont(&fonts::Font4);
-    canvas.drawString("Wi-Fi setup", 8, 6);
+    canvas.drawString("Phone setup", 8, 6);
 
     // QR joins the setup hotspot (it carries the password, so no typing)
     canvas.fillRoundRect(6, 36, 150, 150, 6, TFT_WHITE);
@@ -1208,11 +1636,9 @@ static void drawSetupScreen() {
              : net::savedCount() ? "Saved: " + net::savedSsid(0) : "No Wi-Fi saved yet";
     canvas.setTextColor(c);
     canvas.setFont(&fonts::Font2);
-    drawFit(m, 8, LCD_H - 36, LCD_W - 176, top_left);  // left of the Reset/Exit buttons
+    drawFit(m, 8, LCD_H - 36, LCD_W - 16, top_left);
 
-    bool armed = millis() < resetArmedUntil;
-    drawButton(BTN_SETUP_RESET, armed ? "Sure?" : "Reset", armed ? (uint16_t)0xF800 : (uint16_t)0x9000);
-    drawButton(BTN_SETUP_EXIT, "Exit", 0x2C4A);
+    drawButton(BTN_SETUP_EXIT, "Back", 0x2C4A);
     canvas.pushSprite(0, 0);
 }
 
@@ -1223,15 +1649,6 @@ static void handleSetupTap() {
         net::pause(true);
         wifiScreen = WifiScreen::List;
         startWifiScan();
-    } else if (tapped(BTN_SETUP_RESET)) {
-        if (millis() < resetArmedUntil) {
-            // Factory reset: forget every network and the device key
-            net::forgetAll();
-            clearDeviceKey();
-            resetArmedUntil = 0;
-        } else {
-            resetArmedUntil = millis() + 3000;
-        }
     }
 }
 
@@ -1553,6 +1970,7 @@ void loop() {
         tapY = t.y;
     }
     updateScale();
+    updateHeadGlide();
 
     // Servos missing at boot: keep retrying (quick, non-blocking) for 30s
     static uint32_t lastHeadRetry = 0;
@@ -1569,15 +1987,20 @@ void loop() {
             delay(10);  // keeps the phone portal's web server responsive
             return;
         }
+        // The tap that left setup is used up: Exit sits where the pairing
+        // screen's Wi-Fi button is, and would send us straight back in
+        tapNow = false;
     }
 
     net::maintain();
     logWifiChanges();
+    accountLoop();
 
     // No key yet (first run, or removed on the website): show a pairing code
     if (mode == Mode::Normal && deviceKey.isEmpty()) {
         mode = Mode::Pairing;
         settingsOpen = false;
+        accountMenuOpen = false;
         if (aimVisible) hideAim();
         state = State::Idle;
     }
@@ -1589,16 +2012,44 @@ void loop() {
             delay(50);
             return;
         }
+        // Off to Wi-Fi setup: its screen is drawn next loop (don't flash
+        // the weighing screen in between)
+        if (mode == Mode::WifiSetup) return;
+        tapNow = false;  // same for the tap (if any) that ended pairing
     }
 
-    if (settingsOpen) {
+    if (accountMenuOpen) {
+        if (tapNow) {
+            if (tapped(BTN_UNPAIR)) {
+                if (millis() < unpairArmedUntil) {
+                    Serial.println("Unpair tapped");
+                    accountMenuOpen = false;
+                    settingsOpen = false;
+                    unpairDevice();
+                } else {
+                    unpairArmedUntil = millis() + 3000;
+                }
+            } else {
+                accountMenuOpen = false;  // Close, or anywhere outside the buttons
+            }
+        }
+    } else if (accountTagRect.w > 0 && state != State::Uploading && tapped(accountTagRect)) {
+        accountMenuOpen = true;
+        unpairArmedUntil = 0;
+        if (aimVisible) hideAim();
+        if (state == State::Settling) state = State::Idle;  // no photos while it's open
+        if (ownerName.isEmpty() && millis() - lastAccountCheck >= ACCOUNT_RECHECK_MIN_MS) startAccountCheck();
+    } else if (settingsOpen) {
         handleSettingsTap();
+        if (mode == Mode::WifiSetup) return;  // Wi-Fi button: draw its screen next loop
     } else if (state != State::Uploading) {
         handleJoystick();
         if (tapped({GEAR_X, GEAR_Y, GEAR_W, GEAR_H})) {
             if (aimVisible) hideAim();
             settingsOpen = true;
             powerArmedUntil = 0;
+            unpairArmedUntil = 0;
+            if (millis() - lastAccountCheck >= ACCOUNT_RECHECK_MIN_MS) startAccountCheck();
             if (state == State::Settling) state = State::Idle;  // no photos while adjusting
         } else if (scaleOk && tapped({TARE_X, TARE_Y, TARE_W, TARE_H})) {
             Serial.println("TARE tapped");
@@ -1611,7 +2062,7 @@ void loop() {
     // photo that was just uploaded stays on screen
     bool holdingPhoto = (state == State::Result || state == State::Error)
                         && millis() - resultSince < RESULT_PHOTO_MS;
-    if (cameraOk && state != State::Uploading && !holdingPhoto) {
+    if (cameraOk && state != State::Uploading && !holdingPhoto && !settingsOpen) {
         camera_fb_t* fb = esp_camera_fb_get();
         if (fb) {
             downscale((const uint16_t*)fb->buf);
@@ -1621,7 +2072,7 @@ void loop() {
 
     switch (state) {
         case State::Idle:
-            if (!settingsOpen && !aimVisible && !zeroing() && weight >= MIN_FOOD_GRAMS) {
+            if (!settingsOpen && !aimVisible && !accountMenuOpen && !zeroing() && weight >= MIN_FOOD_GRAMS) {
                 state = State::Settling;
                 settleRef = weight;
                 settleSince = millis();
@@ -1640,7 +2091,7 @@ void loop() {
                     line1 = "Camera not ready";
                     line2 = "Restart Stack-chan";
                     resultSince = millis();
-                } else if (WiFi.status() == WL_CONNECTED) {
+                } else if (WiFi.status() == WL_CONNECTED && !accountCheckBusy) {
                     captureAndUpload();
                     resultSince = millis();
                 }

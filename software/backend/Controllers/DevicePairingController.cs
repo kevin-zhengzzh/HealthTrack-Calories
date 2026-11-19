@@ -77,6 +77,7 @@ public class DevicePairingController : ControllerBase
             Code = code,
             TokenHash = DeviceKeys.Hash(token),
             SuggestedName = name.Length > 0 ? name : "Stack-chan",
+            HardwareId = CleanHardwareId(req?.HardwareId),
             CreatedAt = now,
             ExpiresAt = now + CodeLifetime,
         };
@@ -108,6 +109,20 @@ public class DevicePairingController : ControllerBase
             return NotFound(new { message = "That code wasn't found or has expired. Check the number on the device screen." });
         }
 
+        // The same physical device paired to this account again (e.g. after a
+        // reset): it can only hold one key, so the old record is dead —
+        // replace it rather than listing the device twice. Only within this
+        // account: the id is just a MAC, which anyone nearby can read, so it
+        // must never let one user revoke another user's device.
+        if (pairing.HardwareId is not null)
+        {
+            var old = await _db.Devices
+                .Where(d => d.UserId == userId && d.HardwareId == pairing.HardwareId && d.RevokedAt == null)
+                .ToListAsync();
+            foreach (var d in old) d.RevokedAt = now;
+            await _db.SaveChangesAsync();
+        }
+
         var active = await _db.Devices.CountAsync(d => d.UserId == userId && d.RevokedAt == null);
         if (active >= DeviceController.MaxActiveDevices)
             return BadRequest(new { message = $"You can pair at most {DeviceController.MaxActiveDevices} devices. Remove one first." });
@@ -119,6 +134,7 @@ public class DevicePairingController : ControllerBase
             Name = name.Length > 0 ? name : pairing.SuggestedName,
             KeyHash = DeviceKeys.PendingHash(pairing.Id),
             KeyPrefix = string.Empty,
+            HardwareId = pairing.HardwareId,
             CreatedAt = now,
         };
         _db.Devices.Add(device);
@@ -170,6 +186,13 @@ public class DevicePairingController : ControllerBase
         // So the device can show whose account it now logs meals to
         var username = await _db.Users.Where(u => u.Id == device.UserId).Select(u => u.Username).FirstOrDefaultAsync();
         return Ok(new PairingPollResult("paired", key, device.Name, username));
+    }
+
+    // "AA:BB:CC:DD:EE:FF" style ids only; anything else is ignored
+    private static string? CleanHardwareId(string? id)
+    {
+        var s = (id ?? string.Empty).Trim().ToUpperInvariant();
+        return s.Length is > 0 and <= 32 && s.All(c => char.IsAsciiHexDigit(c) || c is ':' or '-') ? s : null;
     }
 
     private static string Clean(string? name)

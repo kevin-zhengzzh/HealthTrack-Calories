@@ -37,6 +37,45 @@ public class DeviceController : ControllerBase
         return Ok(devices);
     }
 
+    // Called by the device itself (device key, not JWT) to find out whose
+    // account it logs to — and, via 401, that it was removed on the website
+    [HttpGet("me")]
+    [AllowAnonymous]
+    public async Task<IActionResult> Me([FromHeader(Name = DeviceKeys.HeaderName)] string? deviceKey)
+    {
+        if (string.IsNullOrWhiteSpace(deviceKey))
+            return Unauthorized(new { message = "Missing device key." });
+
+        var hash = DeviceKeys.Hash(deviceKey.Trim());
+        var device = await _db.Devices.FirstOrDefaultAsync(d => d.KeyHash == hash && d.RevokedAt == null);
+        if (device is null)
+            return Unauthorized(new { message = "Unknown or revoked device key." });
+
+        device.LastSeenAt = DateTime.UtcNow;
+        await _db.SaveChangesAsync();
+        var username = await _db.Users.Where(u => u.Id == device.UserId).Select(u => u.Username).FirstAsync();
+        return Ok(new DeviceSelfDto(device.Name, username));
+    }
+
+    // Unpair from the device itself: revokes its own key, so the website no
+    // longer lists it and the key can't be used again
+    [HttpDelete("me")]
+    [AllowAnonymous]
+    public async Task<IActionResult> RevokeSelf([FromHeader(Name = DeviceKeys.HeaderName)] string? deviceKey)
+    {
+        if (string.IsNullOrWhiteSpace(deviceKey))
+            return Unauthorized(new { message = "Missing device key." });
+
+        var hash = DeviceKeys.Hash(deviceKey.Trim());
+        var device = await _db.Devices.FirstOrDefaultAsync(d => d.KeyHash == hash && d.RevokedAt == null);
+        if (device is null)
+            return Unauthorized(new { message = "Unknown or revoked device key." });
+
+        device.RevokedAt = DateTime.UtcNow;
+        await _db.SaveChangesAsync();
+        return NoContent();
+    }
+
     [HttpPost]
     public async Task<IActionResult> Create(CreateDeviceRequest req)
     {

@@ -186,6 +186,107 @@ public class DevicePairingControllerTests
     }
 
     [Fact]
+    public async Task DeviceMe_ReturnsAccount_Until_DeviceIsRemoved()
+    {
+        using var db = NewDb();
+        var key = DeviceKeys.Generate();
+        var device = new Device { UserId = Me, Name = "Stack-chan", KeyHash = DeviceKeys.Hash(key) };
+        db.Devices.Add(device);
+        await db.SaveChangesAsync();
+        var controller = new DeviceController(db);
+
+        var me = Body<DeviceSelfDto>(await controller.Me(key));
+        Assert.Equal("me", me.Username);
+        Assert.Equal("Stack-chan", me.Name);
+        Assert.NotNull(device.LastSeenAt);
+
+        device.RevokedAt = DateTime.UtcNow;
+        await db.SaveChangesAsync();
+        Assert.IsType<UnauthorizedObjectResult>(await controller.Me(key));
+        Assert.IsType<UnauthorizedObjectResult>(await controller.Me(null));
+    }
+
+    private static async Task<string> PairFully(AppDbContext db, IMemoryCache cache, int userId, string? hardwareId)
+    {
+        var started = Body<PairingStartResult>(await NewController(db, cache).Start(new PairingStartRequest(null, hardwareId)));
+        Body<DeviceDto>(await NewController(db, cache, userId).Claim(new PairingClaimRequest(started.Code, null)));
+        return Body<PairingPollResult>(await NewController(db, cache).Poll(new PairingPollRequest(started.PairingToken))).Key!;
+    }
+
+    [Fact]
+    public async Task RePairingSameHardware_ReplacesTheOldRecord()
+    {
+        using var db = NewDb();
+        var cache = new MemoryCache(new MemoryCacheOptions());
+
+        await PairFully(db, cache, Me, "aa:bb:cc:dd:ee:ff");
+        await PairFully(db, cache, Me, "AA:BB:CC:DD:EE:FF");
+
+        var active = await db.Devices.Where(d => d.RevokedAt == null).ToListAsync();
+        Assert.Single(active);
+        Assert.Equal("AA:BB:CC:DD:EE:FF", active[0].HardwareId);
+        Assert.Equal(2, await db.Devices.CountAsync());
+    }
+
+    [Fact]
+    public async Task RePairing_WorksAtTheDeviceLimit()
+    {
+        using var db = NewDb();
+        var cache = new MemoryCache(new MemoryCacheOptions());
+        for (var i = 0; i < DeviceController.MaxActiveDevices - 1; i++)
+            db.Devices.Add(new Device { UserId = Me, Name = $"d{i}", KeyHash = $"h{i}" });
+        await db.SaveChangesAsync();
+        await PairFully(db, cache, Me, "AA:BB:CC:DD:EE:FF");
+
+        // Full now, but pairing the same device again just replaces it
+        var key = await PairFully(db, cache, Me, "AA:BB:CC:DD:EE:FF");
+
+        Assert.NotNull(key);
+        Assert.Equal(DeviceController.MaxActiveDevices, await db.Devices.CountAsync(d => d.RevokedAt == null));
+    }
+
+    [Fact]
+    public async Task SameHardware_OnAnotherAccount_LeavesTheFirstAlone()
+    {
+        using var db = NewDb();
+        var cache = new MemoryCache(new MemoryCacheOptions());
+
+        await PairFully(db, cache, Me, "AA:BB:CC:DD:EE:FF");
+        await PairFully(db, cache, SomeoneElse, "AA:BB:CC:DD:EE:FF");
+
+        // A MAC isn't secret, so it must never let one user revoke another's device
+        Assert.Equal(2, await db.Devices.CountAsync(d => d.RevokedAt == null));
+    }
+
+    [Fact]
+    public async Task NoOrInvalidHardwareId_NeverReplacesAnything()
+    {
+        using var db = NewDb();
+        var cache = new MemoryCache(new MemoryCacheOptions());
+
+        await PairFully(db, cache, Me, null);
+        await PairFully(db, cache, Me, null);
+        await PairFully(db, cache, Me, "<script>");
+
+        Assert.Equal(3, await db.Devices.CountAsync(d => d.RevokedAt == null));
+        Assert.All(db.Devices, d => Assert.Null(d.HardwareId));
+    }
+
+    [Fact]
+    public async Task Device_CanUnpairItself()
+    {
+        using var db = NewDb();
+        var key = await PairFully(db, new MemoryCache(new MemoryCacheOptions()), Me, null);
+        var controller = new DeviceController(db);
+
+        Assert.IsType<NoContentResult>(await controller.RevokeSelf(key));
+
+        Assert.NotNull((await db.Devices.SingleAsync()).RevokedAt);
+        Assert.IsType<UnauthorizedObjectResult>(await controller.RevokeSelf(key));
+        Assert.IsType<UnauthorizedObjectResult>(await controller.Me(key));
+    }
+
+    [Fact]
     public async Task Claim_RespectsDeviceLimit()
     {
         using var db = NewDb();

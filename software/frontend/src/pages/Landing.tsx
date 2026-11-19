@@ -53,10 +53,9 @@ export default function Landing() {
           </Link>
           <Link
             to="/register"
-            className="text-sm font-semibold px-4 py-2 rounded-lg text-white transition"
-            style={{ backgroundColor: 'var(--primary)' }}
+            className="text-sm font-medium px-4 py-2 rounded-lg hover:bg-[var(--bg-inset)] transition text-[var(--text-secondary)]"
           >
-            Get Started
+            Register
           </Link>
         </nav>
       </header>
@@ -73,18 +72,18 @@ export default function Landing() {
         </p>
         <div className="mt-8 flex items-center justify-center gap-4 flex-wrap">
           <Link
-            to="/register"
-            className="text-base font-semibold px-8 py-3 rounded-xl text-white shadow-lg transition-transform active:scale-95"
-            style={{ backgroundColor: 'var(--primary)' }}
-          >
-            Get Started Free
-          </Link>
-          <Link
             to="/login"
             className="text-base font-semibold px-8 py-3 rounded-xl border-2 transition bg-[var(--bg-surface)]"
             style={{ borderColor: 'var(--primary)', color: 'var(--primary)' }}
           >
             I already have an account
+          </Link>
+          <Link
+            to="/register"
+            className="text-base font-semibold px-8 py-3 rounded-xl text-white shadow-lg transition-transform active:scale-95"
+            style={{ backgroundColor: 'var(--primary)' }}
+          >
+            Get Started Free
           </Link>
         </div>
       </section>

@@ -18,6 +18,10 @@ public class Device
 
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
     public DateTime? LastSeenAt { get; set; }
+    // Identifies the physical device (its MAC), reported when pairing. Lets a
+    // re-pair replace the same account's old record instead of adding another.
+    public string? HardwareId { get; set; }
+
     // Revoked keys are kept (records still reference the device) but rejected
     public DateTime? RevokedAt { get; set; }
 }
