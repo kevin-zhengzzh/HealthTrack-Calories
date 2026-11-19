@@ -18,6 +18,7 @@
 
 #include <M5Unified.h>
 #include <WiFi.h>
+#include <algorithm>
 #include <WiFiClientSecure.h>
 #include <HTTPClient.h>
 #include <ArduinoJson.h>
@@ -1044,6 +1045,9 @@ static void drawLock(int x, int y) {
     canvas.fillRect(x, y + 6, 12, 9, TFT_LIGHTGREY);
 }
 
+// The network we're on right now ("" when offline)
+static String connectedSsid() { return WiFi.status() == WL_CONNECTED ? WiFi.SSID() : String(); }
+
 static void drawWifiList() {
     canvas.fillSprite(0x10A2);
     canvas.setTextDatum(top_left);
@@ -1067,20 +1071,25 @@ static void drawWifiList() {
         canvas.setTextColor(TFT_LIGHTGREY);
         canvas.drawString("Only 2.4 GHz Wi-Fi is visible", (LCD_W - 44) / 2, 122);
     }
+    String cur = connectedSsid();
     for (int r = 0; r < WL_ROWS && !wifiScanning; r++) {
         int i = wifiPage * WL_ROWS + r;
         if (i >= (int)wifiList.size()) break;
         const auto& n = wifiList[i];
+        bool connected = n.ssid == cur;
         int y = WL_ROW_Y + r * WL_ROW_H;
-        canvas.fillRoundRect(6, y, LCD_W - 52, WL_ROW_H - 4, 6, 0x2945);
+        canvas.fillRoundRect(6, y, LCD_W - 52, WL_ROW_H - 4, 6, connected ? 0x0B46 : 0x2945);
+        if (connected) canvas.drawRoundRect(6, y, LCD_W - 52, WL_ROW_H - 4, 6, TFT_GREEN);
         canvas.setTextDatum(middle_left);
         canvas.setTextColor(TFT_WHITE);
-        // Up to the "saved" mark / signal bars
-        drawFit(n.ssid, 14, y + (WL_ROW_H - 4) / 2, (n.saved ? LCD_W - 132 : LCD_W - 98) - 14, middle_left);
-        if (n.saved) {
+        // Up to the "connected"/"saved" mark, then the signal bars
+        int markW = connected ? 62 : n.saved ? 34 : 0;
+        drawFit(n.ssid, 14, y + (WL_ROW_H - 4) / 2, LCD_W - 98 - markW - 14, middle_left);
+        if (connected || n.saved) {
             canvas.setFont(&fonts::Font0);
             canvas.setTextColor(TFT_GREEN);
-            canvas.drawString("saved", LCD_W - 128, y + (WL_ROW_H - 4) / 2);
+            canvas.setTextDatum(middle_right);
+            canvas.drawString(connected ? "connected" : "saved", LCD_W - 96, y + (WL_ROW_H - 4) / 2);
             canvas.setFont(&fonts::Font2);
         }
         drawSignalBars(LCD_W - 92, y + 8, n.rssi);
@@ -1101,6 +1110,15 @@ static void handleWifiListTap() {
     if (wifiScanning && net::scanDone()) {
         wifiScanning = false;
         wifiList = net::scanResults();
+        // Current network first (added if the scan happened to miss it)
+        String cur = connectedSsid();
+        if (cur.length()) {
+            auto it = std::find_if(wifiList.begin(), wifiList.end(),
+                                   [&](const net::Network& n) { return n.ssid == cur; });
+            net::Network c = it != wifiList.end() ? *it : net::Network{cur, (int)WiFi.RSSI(), false, true};
+            if (it != wifiList.end()) wifiList.erase(it);
+            wifiList.insert(wifiList.begin(), c);
+        }
     }
     if (!tapNow) return;
 
@@ -1108,6 +1126,7 @@ static void handleWifiListTap() {
         int i = wifiPage * WL_ROWS + r;
         if (i >= (int)wifiList.size()) break;
         if (!tapped({6, WL_ROW_Y + r * WL_ROW_H, LCD_W - 52, WL_ROW_H - 4})) continue;
+        if (wifiList[i].ssid == connectedSsid()) return;  // already on it
         chosenSsid = wifiList[i].ssid;
         kbNote = "";
         if (wifiList[i].open) {
