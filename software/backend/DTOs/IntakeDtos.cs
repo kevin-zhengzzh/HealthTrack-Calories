@@ -10,14 +10,15 @@ public record CreateDeviceResult(int Id, string Name, string KeyPrefix, string K
 public record DeviceDto(int Id, string Name, string KeyPrefix, DateTime CreatedAt, DateTime? LastSeenAt, bool AwaitingDevice);
 
 // Pairing-code flow (device ⇄ backend ⇄ website)
-public record PairingStartRequest(string? Name);
+public record PairingStartRequest(string? Name, string? HardwareId = null);
 public record PairingStartResult(string Code, string PairingToken, DateTime ExpiresAt, int PollSeconds);
 public record PairingClaimRequest(string Code, string? Name);
 public record PairingPollRequest(string PairingToken);
 // Status: "pending" | "paired" (Key set, returned once) | "expired"
-public record DeviceSelfDto(string Name, string Username);
-
 public record PairingPollResult(string Status, string? Key, string? DeviceName, string? Username = null);
+
+// GET /api/device/me — asked by the device itself
+public record DeviceSelfDto(string Name, string Username);
 
 public record IntakeRecordDto(
     int Id,

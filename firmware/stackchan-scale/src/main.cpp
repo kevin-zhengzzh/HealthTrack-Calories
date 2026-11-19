@@ -81,17 +81,15 @@ static constexpr Rect BTN_CENTER = {PANEL_X + 6, 142, PANEL_W - 12, 34};
 static constexpr int WL_ROW_Y = 32, WL_VIEW_H = LCD_H - 46 - WL_ROW_Y;
 static constexpr int WL_ROW_H = 38, WL_CARD_H = 34, WL_EXP_H = 42;
 static constexpr int WL_X = 6, WL_W = LCD_W - 18;  // room for the scroll bar
-static constexpr Rect BTN_WL_RESCAN = {4, LCD_H - 42, 74, 38};
-static constexpr Rect BTN_WL_PHONE  = {82, LCD_H - 42, 74, 38};
-static constexpr Rect BTN_WL_RESET  = {160, LCD_H - 42, 74, 38};
-static constexpr Rect BTN_WL_EXIT   = {238, LCD_H - 42, 78, 38};
+static constexpr Rect BTN_WL_RESCAN = {4, LCD_H - 42, 100, 38};
+static constexpr Rect BTN_WL_PHONE  = {110, LCD_H - 42, 100, 38};
+static constexpr Rect BTN_WL_EXIT   = {216, LCD_H - 42, 100, 38};
 static constexpr int KB_Y = 62, KB_KEY_H = 42;   // keyboard rows at 62, 106, 150, 194
 static constexpr Rect BTN_JOIN_RETYPE = {4, LCD_H - 46, 100, 40};
 static constexpr Rect BTN_JOIN_SAVE   = {110, LCD_H - 46, 100, 40};
 static constexpr Rect BTN_JOIN_BACK   = {216, LCD_H - 46, 100, 40};
 // Phone-portal screen and pairing screen
 static constexpr Rect BTN_SETUP_EXIT  = {LCD_W - 80, LCD_H - 42, 74, 36};
-static constexpr Rect BTN_SETUP_RESET = {LCD_W - 160, LCD_H - 42, 74, 36};
 static constexpr Rect BTN_PAIR_WIFI   = {LCD_W - 80, LCD_H - 42, 74, 36};
 static constexpr Rect BTN_POWER = {PANEL_X + 6, MSG_Y + 6, PANEL_W - 12, 48};
 // Aim joystick on the main screen: tap the camera view to show it in the
@@ -154,6 +152,9 @@ static Mode mode = Mode::Normal;
 // Device key from pairing, stored in NVS namespace "dev"
 static String deviceKey;
 static String ownerName;  // account this device logs meals to (from pairing)
+static Rect accountTagRect = {0, 0, 0, 0};  // where the tag was last drawn (tap target)
+static bool accountMenuOpen = false;
+static uint32_t unpairArmedUntil = 0;       // Unpair needs a second tap
 
 // On-device Wi-Fi setup
 enum class WifiScreen { List, Password, Joining, Phone };
@@ -176,7 +177,6 @@ static void enterWifiSetup();  // defined with the Wi-Fi setup screens
 // Pairing-code flow
 static String pairCode, pairToken, pairMsg;
 static uint32_t pairExpiresAt = 0, nextPairPoll = 0;
-static uint32_t resetArmedUntil = 0;
 
 enum class State { Idle, Settling, Uploading, Result, Error };
 // Steps inside State::Uploading, shown on screen
@@ -488,18 +488,45 @@ static void drawJoystick() {
     canvas.drawCircle(kx, ky, JOY_KNOB_R, TFT_WHITE);
 }
 
-// Whose account meals go to: a translucent tag in the image's top-left corner
+// Whose account meals go to: a translucent tag in the image's top-left
+// corner. Tapping it opens the account card (with Unpair).
 static void drawAccountTag() {
-    if (ownerName.isEmpty()) return;
+    accountTagRect = {0, 0, 0, 0};
+    if (deviceKey.isEmpty()) return;
+    // Devices paired before usernames were sent learn theirs from the account check
+    String label = ownerName.isEmpty() ? String("Paired") : ownerName;
     canvas.setFont(&fonts::Font2);
     const int x = 6, y = 6, h = 22;
-    int tw = min((int)canvas.textWidth(ownerName), PREV_W / 2);
-    fillRoundRectAlpha({x, y, tw + 32, h}, h / 2, TFT_BLACK, 150);
+    int tw = min((int)canvas.textWidth(label), PREV_W / 2);
+    accountTagRect = {x, y, tw + 32, h};
+    fillRoundRectAlpha(accountTagRect, h / 2, TFT_BLACK, 150);
     // Person icon
     canvas.fillCircle(x + 13, y + 8, 4, TFT_LIGHTGREY);
     canvas.fillRoundRect(x + 7, y + 13, 13, 7, 3, TFT_LIGHTGREY);
     canvas.setTextColor(TFT_WHITE);
-    drawFit(ownerName, x + 24, y + h / 2, tw, middle_left);
+    drawFit(label, x + 24, y + h / 2, tw, middle_left);
+}
+
+static constexpr Rect ACCOUNT_CARD = {14, 34, PREV_W - 28, 116};
+static constexpr Rect BTN_UNPAIR = {ACCOUNT_CARD.x + 10, ACCOUNT_CARD.y + ACCOUNT_CARD.h - 44,
+                                    (ACCOUNT_CARD.w - 30) / 2, 34};
+static constexpr Rect BTN_ACCOUNT_CLOSE = {BTN_UNPAIR.x + BTN_UNPAIR.w + 10, BTN_UNPAIR.y, BTN_UNPAIR.w, 34};
+
+static void drawAccountMenu() {
+    if (!accountMenuOpen) return;
+    const Rect& c = ACCOUNT_CARD;
+    fillRoundRectAlpha(c, 10, TFT_BLACK, 210);
+    canvas.drawRoundRect(c.x, c.y, c.w, c.h, 10, 0x4208);
+    canvas.setTextDatum(top_left);
+    canvas.setFont(&fonts::Font2);
+    canvas.setTextColor(TFT_LIGHTGREY);
+    canvas.drawString("Logging meals for", c.x + 12, c.y + 10);
+    canvas.setFont(&fonts::Font4);
+    canvas.setTextColor(TFT_WHITE);
+    drawFit(ownerName.isEmpty() ? String("(checking...)") : ownerName, c.x + 12, c.y + 30, c.w - 24, top_left);
+    bool armed = millis() < unpairArmedUntil;
+    drawButton(BTN_UNPAIR, armed ? "Sure?" : "Unpair", armed ? (uint16_t)0xF800 : (uint16_t)0x9000);
+    drawButton(BTN_ACCOUNT_CLOSE, "Close", 0x2C4A);
 }
 
 static void drawSettings() {
@@ -549,6 +576,7 @@ static void drawScreen() {
     drawAccountTag();
     if (settingsOpen) {
         drawSettings();
+        drawAccountMenu();
         canvas.pushSprite(0, 0);
         return;
     }
@@ -602,6 +630,7 @@ static void drawScreen() {
 
     if (aimVisible) drawJoystick();
     drawPanel();  // last, so long message text can't spill into the column
+    drawAccountMenu();
     canvas.pushSprite(0, 0);
 }
 
@@ -916,6 +945,42 @@ static void accountCheckTask(void* arg) {
     vTaskDelete(nullptr);
 }
 
+// Tells the backend to revoke this device's key (DELETE /api/device/me), so
+// the website stops listing it. Best effort: offline, it's only forgotten here.
+static volatile bool unpairBusy = false;
+
+static void unpairTask(void* arg) {
+    String* key = (String*)arg;
+    int code = -1;
+    {
+        HTTPClient http;
+        WiFiClient plain;
+        WiFiClientSecure secure;
+        if (beginHttp(http, plain, secure, String(API_BASE_URL) + "/api/device/me")) {
+            http.setTimeout(HTTP_TIMEOUT);
+            http.addHeader("X-Device-Key", *key);
+            code = http.sendRequest("DELETE");
+            http.end();
+        }
+    }
+    Serial.printf("Unpair: server answered %d\n", code);
+    delete key;
+    unpairBusy = false;
+    vTaskDelete(nullptr);
+}
+
+static void unpairDevice() {
+    String key = deviceKey;
+    clearDeviceKey();  // the main loop now switches to the pairing screen
+    if (key.isEmpty() || WiFi.status() != WL_CONNECTED || unpairBusy) return;
+    unpairBusy = true;
+    String* arg = new String(key);
+    if (xTaskCreate(unpairTask, "unpair", 12288, arg, 1, nullptr) != pdPASS) {
+        delete arg;
+        unpairBusy = false;
+    }
+}
+
 static void startAccountCheck() {
     if (accountCheckBusy || deviceKey.isEmpty() || WiFi.status() != WL_CONNECTED || state == State::Uploading)
         return;
@@ -1027,7 +1092,7 @@ static void onPairPoll(int code, const String& resp) {
 }
 
 static void pairingLoop() {
-    if (pairBusy) return;
+    if (pairBusy || unpairBusy) return;  // one TLS connection at a time
     if (pairDone) {
         pairDone = false;
         if (pairReqIsStart) onPairStart(pairReqCode, pairReqResponse);
@@ -1037,7 +1102,8 @@ static void pairingLoop() {
     if (WiFi.status() != WL_CONNECTED) return;
     if (millis() < nextPairPoll) return;
     if (pairToken.isEmpty() || millis() > pairExpiresAt)
-        startPairRequest(true, "/api/device/pairing/start", "{\"name\":\"Stack-chan\"}");
+        startPairRequest(true, "/api/device/pairing/start",
+                         "{\"name\":\"Stack-chan\",\"hardwareId\":\"" + WiFi.macAddress() + "\"}");
     else
         startPairRequest(false, "/api/device/pairing/poll", String("{\"pairingToken\":\"") + pairToken + "\"}");
 }
@@ -1056,7 +1122,6 @@ static void enterWifiSetup() {
     mode = Mode::WifiSetup;
     wifiScreen = WifiScreen::List;
     settingsOpen = false;
-    resetArmedUntil = 0;
     net::pause(true);  // no background reconnects while the user chooses
     startWifiScan();
 }
@@ -1197,8 +1262,6 @@ static void drawWifiList() {
 
     drawButton(BTN_WL_RESCAN, "Rescan", 0x2C4A, !wifiScanning);
     drawButton(BTN_WL_PHONE, "Phone", 0x2C4A);
-    bool armed = millis() < resetArmedUntil;
-    drawButton(BTN_WL_RESET, armed ? "Sure?" : "Reset", armed ? (uint16_t)0xF800 : (uint16_t)0x9000);
     drawButton(BTN_WL_EXIT, "Exit", 0x2C4A);
     canvas.pushSprite(0, 0);
 }
@@ -1318,16 +1381,6 @@ static void handleWifiListTap() {
     else if (tapped(BTN_WL_PHONE)) {
         wifiScreen = WifiScreen::Phone;
         net::startPortal();
-    } else if (tapped(BTN_WL_RESET)) {
-        if (millis() < resetArmedUntil) {
-            net::forgetAll();
-            WiFi.disconnect(false, true);  // drop the connection and the SDK's stored credentials
-            clearDeviceKey();
-            resetArmedUntil = 0;
-            startWifiScan();  // refresh the "saved" marks
-        } else {
-            resetArmedUntil = millis() + 3000;
-        }
     } else if (tapped(BTN_WL_EXIT)) {
         exitWifiSetup();
     }
@@ -1516,10 +1569,8 @@ static void drawSetupScreen() {
              : net::savedCount() ? "Saved: " + net::savedSsid(0) : "No Wi-Fi saved yet";
     canvas.setTextColor(c);
     canvas.setFont(&fonts::Font2);
-    drawFit(m, 8, LCD_H - 36, LCD_W - 176, top_left);  // left of the Reset/Exit buttons
+    drawFit(m, 8, LCD_H - 36, LCD_W - 96, top_left);  // left of the Exit button
 
-    bool armed = millis() < resetArmedUntil;
-    drawButton(BTN_SETUP_RESET, armed ? "Sure?" : "Reset", armed ? (uint16_t)0xF800 : (uint16_t)0x9000);
     drawButton(BTN_SETUP_EXIT, "Exit", 0x2C4A);
     canvas.pushSprite(0, 0);
 }
@@ -1531,16 +1582,6 @@ static void handleSetupTap() {
         net::pause(true);
         wifiScreen = WifiScreen::List;
         startWifiScan();
-    } else if (tapped(BTN_SETUP_RESET)) {
-        if (millis() < resetArmedUntil) {
-            // Factory reset: forget every network and the device key
-            net::forgetAll();
-            WiFi.disconnect(false, true);  // drop the connection and the SDK's stored credentials
-            clearDeviceKey();
-            resetArmedUntil = 0;
-        } else {
-            resetArmedUntil = millis() + 3000;
-        }
     }
 }
 
@@ -1889,6 +1930,7 @@ void loop() {
     if (mode == Mode::Normal && deviceKey.isEmpty()) {
         mode = Mode::Pairing;
         settingsOpen = false;
+        accountMenuOpen = false;
         if (aimVisible) hideAim();
         state = State::Idle;
     }
@@ -1902,7 +1944,28 @@ void loop() {
         }
     }
 
-    if (settingsOpen) {
+    if (accountMenuOpen) {
+        if (tapNow) {
+            if (tapped(BTN_UNPAIR)) {
+                if (millis() < unpairArmedUntil) {
+                    Serial.println("Unpair tapped");
+                    accountMenuOpen = false;
+                    settingsOpen = false;
+                    unpairDevice();
+                } else {
+                    unpairArmedUntil = millis() + 3000;
+                }
+            } else {
+                accountMenuOpen = false;  // Close, or anywhere outside the buttons
+            }
+        }
+    } else if (accountTagRect.w > 0 && state != State::Uploading && tapped(accountTagRect)) {
+        accountMenuOpen = true;
+        unpairArmedUntil = 0;
+        if (aimVisible) hideAim();
+        if (state == State::Settling) state = State::Idle;  // no photos while it's open
+        if (ownerName.isEmpty() && millis() - lastAccountCheck >= ACCOUNT_RECHECK_MIN_MS) startAccountCheck();
+    } else if (settingsOpen) {
         handleSettingsTap();
     } else if (state != State::Uploading) {
         handleJoystick();
@@ -1933,7 +1996,7 @@ void loop() {
 
     switch (state) {
         case State::Idle:
-            if (!settingsOpen && !aimVisible && !zeroing() && weight >= MIN_FOOD_GRAMS) {
+            if (!settingsOpen && !aimVisible && !accountMenuOpen && !zeroing() && weight >= MIN_FOOD_GRAMS) {
                 state = State::Settling;
                 settleRef = weight;
                 settleSince = millis();

@@ -18,6 +18,8 @@ public class DevicePairing
 
     // Name the device suggested for itself; the user can override it on claim
     public string SuggestedName { get; set; } = string.Empty;
+    // Physical device id the device reported (see Device.HardwareId)
+    public string? HardwareId { get; set; }
 
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
     public DateTime ExpiresAt { get; set; }
