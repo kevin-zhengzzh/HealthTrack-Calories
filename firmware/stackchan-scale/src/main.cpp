@@ -190,6 +190,7 @@ static bool aimVisible = false;
 static uint32_t aimLastTap = 0;
 static int savedYaw = 0, savedPitch = 0;  // what's in NVS, to skip needless writes
 
+static bool headGliding = false;  // Center's eased move in progress
 static bool atHome() { return headYaw == 0 && headPitch == HOME_PITCH; }
 
 // "12.5" from tenths of a degree, so small offsets are visible
@@ -527,7 +528,7 @@ static void drawSettings() {
         canvas.setTextColor(TFT_ORANGE);
         canvas.drawString("NO SERVOS", cx, 110);
     }
-    drawButton(BTN_CENTER, "Home", 0x2C4A, h && !atHome());
+    drawButton(BTN_CENTER, "Center", 0x2C4A, h && !atHome() && !headGliding);
     bool armed = millis() < powerArmedUntil;
     drawButton(BTN_POWER, armed ? "Sure?" : "Power", armed ? (uint16_t)0xF800 : (uint16_t)0x9000);
 }
@@ -603,7 +604,13 @@ static void saveHead() {
     if (headPitch != savedPitch) prefs.putInt("pitch", savedPitch = headPitch);
 }
 
+// Gentle move for Center: eased over ~0.4-1.6s instead of the servos' full
+// speed, which snapped the head round fast enough to startle
+static int glideFromYaw, glideFromPitch, glideToYaw, glideToPitch;
+static uint32_t glideStart, glideMs;
+
 static void moveHeadTo(int yaw, int pitch) {
+    headGliding = false;  // a manual move (joystick) takes over
     if (!head::ok()) return;
     yaw = constrain(yaw, head::YAW_MIN, head::YAW_MAX);
     pitch = constrain(pitch, head::PITCH_MIN, head::PITCH_MAX);
@@ -614,6 +621,35 @@ static void moveHeadTo(int yaw, int pitch) {
 }
 
 static void moveHead(int dYaw, int dPitch) { moveHeadTo(headYaw + dYaw, headPitch + dPitch); }
+
+static void glideHeadTo(int yaw, int pitch) {
+    if (!head::ok()) return;
+    yaw = constrain(yaw, head::YAW_MIN, head::YAW_MAX);
+    pitch = constrain(pitch, head::PITCH_MIN, head::PITCH_MAX);
+    int dist = max(abs(yaw - headYaw), abs(pitch - headPitch));  // tenths of a degree
+    if (dist == 0) return;
+    glideFromYaw = headYaw;
+    glideFromPitch = headPitch;
+    glideToYaw = yaw;
+    glideToPitch = pitch;
+    glideStart = millis();
+    glideMs = constrain(dist * 3 / 2, 400, 1600);  // 90 degrees in about 1.4s
+    headGliding = true;
+}
+
+// Called every loop: steps the head along the glide (smoothstep easing)
+static void updateHeadGlide() {
+    if (!headGliding) return;
+    float t = (millis() - glideStart) / (float)glideMs;
+    if (t >= 1) {
+        t = 1;
+        headGliding = false;
+    }
+    float e = t * t * (3 - 2 * t);
+    headYaw = glideFromYaw + (int)lroundf((glideToYaw - glideFromYaw) * e);
+    headPitch = glideFromPitch + (int)lroundf((glideToPitch - glideFromPitch) * e);
+    head::setPose(headYaw, headPitch);
+}
 
 static void hideAim() {
     aimVisible = false;
@@ -692,8 +728,8 @@ static void handleSettingsTap() {
         return;
     }
     if (tapped(BTN_CENTER)) {
-        moveHeadTo(0, HOME_PITCH);
-        Serial.println("Head: home");
+        glideHeadTo(0, HOME_PITCH);
+        Serial.println("Head: center");
     }
     if (tapped(BTN_POWER)) {
         if (millis() < powerArmedUntil) {
@@ -1636,6 +1672,7 @@ void loop() {
         tapY = t.y;
     }
     updateScale();
+    updateHeadGlide();
 
     // Servos missing at boot: keep retrying (quick, non-blocking) for 30s
     static uint32_t lastHeadRetry = 0;
