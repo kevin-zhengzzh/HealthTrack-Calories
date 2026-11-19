@@ -76,9 +76,11 @@ static constexpr Rect BTN_DONE  = {PANEL_X + 6, 6, PANEL_W - 12, 34};
 static constexpr Rect BTN_WIFI  = {PANEL_X + 6, 46, PANEL_W - 12, 34};
 static constexpr Rect BTN_CENTER = {PANEL_X + 6, 142, PANEL_W - 12, 34};
 // On-device Wi-Fi: network list (4 rows per page), keyboard, connecting
-static constexpr int WL_ROW_Y = 32, WL_ROW_H = 38, WL_ROWS = 4;
-static constexpr Rect BTN_WL_UP    = {LCD_W - 40, 32, 34, 72};
-static constexpr Rect BTN_WL_DOWN  = {LCD_W - 40, 110, 34, 72};
+// Scrollable list between the title and the bottom buttons; the tapped row
+// opens to show its actions (connect, disconnect, password, forget)
+static constexpr int WL_ROW_Y = 32, WL_VIEW_H = LCD_H - 46 - WL_ROW_Y;
+static constexpr int WL_ROW_H = 38, WL_CARD_H = 34, WL_EXP_H = 42;
+static constexpr int WL_X = 6, WL_W = LCD_W - 18;  // room for the scroll bar
 static constexpr Rect BTN_WL_RESCAN = {4, LCD_H - 42, 74, 38};
 static constexpr Rect BTN_WL_PHONE  = {82, LCD_H - 42, 74, 38};
 static constexpr Rect BTN_WL_RESET  = {160, LCD_H - 42, 74, 38};
@@ -158,7 +160,11 @@ enum class WifiScreen { List, Password, Joining, Phone };
 static WifiScreen wifiScreen = WifiScreen::List;
 static std::vector<net::Network> wifiList;
 static bool wifiScanning = false;
-static int wifiPage = 0;
+static int wifiScroll = 0;              // list scroll offset, px
+static int wifiSel = -1;                // opened row, or -1
+static uint32_t forgetArmedUntil = 0;   // Forget needs a second tap
+static bool listTouching = false, listDragged = false;
+static int listStartX = 0, listStartY = 0, listStartScroll = 0;
 static String chosenSsid, typedPass, kbNote;
 static int kbLayer = 0;                 // 0 lower, 1 upper, 2 digits & symbols
 static net::JoinState joinResult = net::JoinState::Trying;
@@ -1042,7 +1048,8 @@ static void startWifiScan() {
     net::startScan();
     wifiScanning = true;
     wifiList.clear();
-    wifiPage = 0;
+    wifiScroll = 0;
+    wifiSel = -1;
 }
 
 static void enterWifiSetup() {
@@ -1083,62 +1090,191 @@ static void drawLock(int x, int y) {
 // The network we're on right now ("" when offline)
 static String connectedSsid() { return WiFi.status() == WL_CONNECTED ? WiFi.SSID() : String(); }
 
+enum class WlAction { Connect, Disconnect, Password, Forget };
+
+// What the opened row offers, depending on the network's state
+static std::vector<WlAction> wifiActions(const net::Network& n) {
+    std::vector<WlAction> a;
+    bool connected = n.ssid == connectedSsid();
+    a.push_back(connected ? WlAction::Disconnect : WlAction::Connect);
+    if (!n.open && (connected || n.saved)) a.push_back(WlAction::Password);
+    if (n.saved) a.push_back(WlAction::Forget);
+    return a;
+}
+
+static Rect wifiActionRect(int rowY, int k, int count) {
+    const int gap = 6, inner = WL_W - 16;
+    int w = (inner - gap * (count - 1)) / count;
+    return {WL_X + 8 + k * (w + gap), rowY + WL_CARD_H + 4, w, WL_EXP_H - 8};
+}
+
+// Top of row i in screen coordinates (rows below the opened one move down)
+static int wifiRowY(int i) {
+    return WL_ROW_Y + i * WL_ROW_H + (wifiSel >= 0 && i > wifiSel ? WL_EXP_H : 0) - wifiScroll;
+}
+
+static int wifiMaxScroll() {
+    int content = (int)wifiList.size() * WL_ROW_H + (wifiSel >= 0 ? WL_EXP_H : 0);
+    return max(0, content - WL_VIEW_H);
+}
+
 static void drawWifiList() {
     canvas.fillSprite(0x10A2);
+    String cur = connectedSsid();
+
+    // Rows first; the title and button bars are painted over whatever
+    // scrolls under them (drawFit's own clip rect rules out a list clip)
+    for (int i = 0; i < (int)wifiList.size() && !wifiScanning; i++) {
+        int y = wifiRowY(i);
+        bool open = i == wifiSel;
+        int h = WL_CARD_H + (open ? WL_EXP_H : 0);
+        if (y + h < WL_ROW_Y || y > WL_ROW_Y + WL_VIEW_H) continue;
+        const auto& n = wifiList[i];
+        bool connected = n.ssid == cur;
+        canvas.fillRoundRect(WL_X, y, WL_W, h, 6, connected ? 0x0B46 : open ? 0x3186 : 0x2945);
+        if (connected) canvas.drawRoundRect(WL_X, y, WL_W, h, 6, TFT_GREEN);
+        int right = WL_X + WL_W;
+        int midY = y + WL_CARD_H / 2;
+        canvas.setFont(&fonts::Font2);
+        canvas.setTextColor(TFT_WHITE);
+        // Name, up to the "connected"/"saved" mark, then signal bars and lock
+        int markW = connected ? 62 : n.saved ? 34 : 0;
+        drawFit(n.ssid, WL_X + 8, midY, right - 52 - markW - (WL_X + 8), middle_left);
+        if (connected || n.saved) {
+            canvas.setFont(&fonts::Font0);
+            canvas.setTextColor(TFT_GREEN);
+            canvas.setTextDatum(middle_right);
+            canvas.drawString(connected ? "connected" : "saved", right - 52, midY);
+            canvas.setFont(&fonts::Font2);
+        }
+        drawSignalBars(right - 46, y + 9, n.rssi);
+        if (!n.open) drawLock(right - 18, y + 11);
+
+        if (open) {
+            auto acts = wifiActions(n);
+            for (int k = 0; k < (int)acts.size(); k++) {
+                Rect r = wifiActionRect(y, k, acts.size());
+                bool armed = millis() < forgetArmedUntil;
+                switch (acts[k]) {
+                    case WlAction::Connect:    drawButton(r, "Connect", 0x2C4A); break;
+                    case WlAction::Disconnect: drawButton(r, "Disconnect", 0x7A00); break;
+                    case WlAction::Password:   drawButton(r, "Password", 0x2C4A); break;
+                    case WlAction::Forget:
+                        drawButton(r, armed ? "Sure?" : "Forget", armed ? (uint16_t)0xF800 : (uint16_t)0x9000);
+                        break;
+                }
+            }
+        }
+    }
+
+    // Scroll bar
+    int maxScroll = wifiMaxScroll();
+    if (maxScroll > 0 && !wifiScanning) {
+        int content = WL_VIEW_H + maxScroll;
+        int barH = max(16, WL_VIEW_H * WL_VIEW_H / content);
+        int barY = WL_ROW_Y + (WL_VIEW_H - barH) * wifiScroll / maxScroll;
+        canvas.fillRoundRect(LCD_W - 7, barY, 4, barH, 2, TFT_DARKGREY);
+    }
+
+    canvas.fillRect(0, 0, LCD_W, WL_ROW_Y - 2, 0x10A2);
+    canvas.fillRect(0, WL_ROW_Y + WL_VIEW_H, LCD_W, LCD_H - WL_ROW_Y - WL_VIEW_H, 0x10A2);
     canvas.setTextDatum(top_left);
     canvas.setFont(&fonts::Font4);
     canvas.setTextColor(TFT_WHITE);
     canvas.drawString("Choose Wi-Fi", 8, 4);
 
-    int pages = max(1, ((int)wifiList.size() + WL_ROWS - 1) / WL_ROWS);
     canvas.setFont(&fonts::Font2);
-    canvas.setTextDatum(top_right);
-    canvas.setTextColor(TFT_LIGHTGREY);
-    if (!wifiScanning && !wifiList.empty()) canvas.drawString(String(wifiPage + 1) + "/" + String(pages), LCD_W - 8, 8);
-
     canvas.setTextDatum(middle_center);
     if (wifiScanning) {
         canvas.setTextColor(TFT_WHITE);
-        canvas.drawString("Scanning...", (LCD_W - 44) / 2, 110);
+        canvas.drawString("Scanning...", LCD_W / 2, 110);
     } else if (wifiList.empty()) {
         canvas.setTextColor(TFT_WHITE);
-        canvas.drawString("No networks found", (LCD_W - 44) / 2, 100);
+        canvas.drawString("No networks found", LCD_W / 2, 100);
         canvas.setTextColor(TFT_LIGHTGREY);
-        canvas.drawString("Only 2.4 GHz Wi-Fi is visible", (LCD_W - 44) / 2, 122);
-    }
-    String cur = connectedSsid();
-    for (int r = 0; r < WL_ROWS && !wifiScanning; r++) {
-        int i = wifiPage * WL_ROWS + r;
-        if (i >= (int)wifiList.size()) break;
-        const auto& n = wifiList[i];
-        bool connected = n.ssid == cur;
-        int y = WL_ROW_Y + r * WL_ROW_H;
-        canvas.fillRoundRect(6, y, LCD_W - 52, WL_ROW_H - 4, 6, connected ? 0x0B46 : 0x2945);
-        if (connected) canvas.drawRoundRect(6, y, LCD_W - 52, WL_ROW_H - 4, 6, TFT_GREEN);
-        canvas.setTextDatum(middle_left);
-        canvas.setTextColor(TFT_WHITE);
-        // Up to the "connected"/"saved" mark, then the signal bars
-        int markW = connected ? 62 : n.saved ? 34 : 0;
-        drawFit(n.ssid, 14, y + (WL_ROW_H - 4) / 2, LCD_W - 98 - markW - 14, middle_left);
-        if (connected || n.saved) {
-            canvas.setFont(&fonts::Font0);
-            canvas.setTextColor(TFT_GREEN);
-            canvas.setTextDatum(middle_right);
-            canvas.drawString(connected ? "connected" : "saved", LCD_W - 96, y + (WL_ROW_H - 4) / 2);
-            canvas.setFont(&fonts::Font2);
-        }
-        drawSignalBars(LCD_W - 92, y + 8, n.rssi);
-        if (!n.open) drawLock(LCD_W - 64, y + 10);
+        canvas.drawString("Only 2.4 GHz Wi-Fi is visible", LCD_W / 2, 122);
     }
 
-    drawButton(BTN_WL_UP, "^", 0x2C4A, wifiPage > 0);
-    drawButton(BTN_WL_DOWN, "v", 0x2C4A, wifiPage < pages - 1);
     drawButton(BTN_WL_RESCAN, "Rescan", 0x2C4A, !wifiScanning);
     drawButton(BTN_WL_PHONE, "Phone", 0x2C4A);
     bool armed = millis() < resetArmedUntil;
     drawButton(BTN_WL_RESET, armed ? "Sure?" : "Reset", armed ? (uint16_t)0xF800 : (uint16_t)0x9000);
     drawButton(BTN_WL_EXIT, "Exit", 0x2C4A);
     canvas.pushSprite(0, 0);
+}
+
+static bool inRect(int x, int y, const Rect& r) {
+    return x >= r.x && x < r.x + r.w && y >= r.y && y < r.y + r.h;
+}
+
+static void runWifiAction(const net::Network& n, WlAction a) {
+    chosenSsid = n.ssid;
+    kbNote = "";
+    switch (a) {
+        case WlAction::Connect:
+            if (n.open) {
+                typedPass = "";
+                startJoin();
+            } else if (n.saved) {
+                typedPass = net::savedPassword(chosenSsid);  // wrong one -> back to the keyboard
+                startJoin();
+            } else {
+                typedPass = "";
+                kbLayer = 0;
+                wifiScreen = WifiScreen::Password;
+            }
+            break;
+        case WlAction::Password:
+            typedPass = "";
+            kbLayer = 0;
+            wifiScreen = WifiScreen::Password;
+            break;
+        case WlAction::Disconnect:
+            Serial.printf("Wi-Fi: disconnected from '%s' by user\n", n.ssid.c_str());
+            net::disconnect();
+            break;
+        case WlAction::Forget:
+            if (millis() < forgetArmedUntil) {
+                Serial.printf("Wi-Fi: forgot '%s'\n", n.ssid.c_str());
+                net::forget(n.ssid);
+                wifiList[wifiSel].saved = false;
+                forgetArmedUntil = 0;
+            } else {
+                forgetArmedUntil = millis() + 3000;
+            }
+            break;
+    }
+}
+
+// A tap (not a drag) inside the list
+static void handleWifiListClick(int x, int y) {
+    // Buttons of the opened row
+    if (wifiSel >= 0 && wifiSel < (int)wifiList.size()) {
+        auto acts = wifiActions(wifiList[wifiSel]);
+        int rowY = wifiRowY(wifiSel);
+        for (int k = 0; k < (int)acts.size(); k++) {
+            if (!inRect(x, y, wifiActionRect(rowY, k, acts.size()))) continue;
+            runWifiAction(wifiList[wifiSel], acts[k]);
+            return;
+        }
+    }
+    for (int i = 0; i < (int)wifiList.size(); i++) {
+        int rowY = wifiRowY(i);
+        int h = WL_CARD_H + (i == wifiSel ? WL_EXP_H : 0);
+        if (!inRect(x, y, {WL_X, rowY, WL_W, h})) continue;
+        forgetArmedUntil = 0;
+        wifiSel = wifiSel == i ? -1 : i;  // tap again to close
+        if (wifiSel >= 0) {
+            // Scroll so the opened row, with its buttons, is fully visible
+            int top = i * WL_ROW_H, bottom = top + WL_CARD_H + WL_EXP_H;
+            if (bottom - wifiScroll > WL_VIEW_H) wifiScroll = bottom - WL_VIEW_H;
+            if (top < wifiScroll) wifiScroll = top;
+        }
+        wifiScroll = constrain(wifiScroll, 0, wifiMaxScroll());
+        return;
+    }
+    wifiSel = -1;  // empty space closes the opened row
+    wifiScroll = constrain(wifiScroll, 0, wifiMaxScroll());
 }
 
 static void handleWifiListTap() {
@@ -1155,36 +1291,30 @@ static void handleWifiListTap() {
             wifiList.insert(wifiList.begin(), c);
         }
     }
-    if (!tapNow) return;
 
-    for (int r = 0; r < WL_ROWS && !wifiScanning; r++) {
-        int i = wifiPage * WL_ROWS + r;
-        if (i >= (int)wifiList.size()) break;
-        if (!tapped({6, WL_ROW_Y + r * WL_ROW_H, LCD_W - 52, WL_ROW_H - 4})) continue;
-        chosenSsid = wifiList[i].ssid;
-        kbNote = "";
-        if (chosenSsid == connectedSsid() && !wifiList[i].open) {
-            // Already on it: the only useful thing is typing a new password
-            typedPass = "";
-            kbLayer = 0;
-            wifiScreen = WifiScreen::Password;
-        } else if (wifiList[i].open) {
-            typedPass = "";
-            startJoin();
-        } else if (wifiList[i].saved) {
-            typedPass = net::savedPassword(chosenSsid);  // wrong one -> back to the keyboard
-            startJoin();
+    // List: drag to scroll; a press released without moving is a tap
+    if (tapNow && tapY >= WL_ROW_Y && tapY < WL_ROW_Y + WL_VIEW_H && !wifiScanning) {
+        listTouching = true;
+        listDragged = false;
+        listStartX = tapX;
+        listStartY = tapY;
+        listStartScroll = wifiScroll;
+        return;
+    }
+    if (listTouching) {
+        if (touchHeld) {
+            int dy = tapY - listStartY;
+            if (abs(dy) > 8) listDragged = true;
+            if (listDragged) wifiScroll = constrain(listStartScroll - dy, 0, wifiMaxScroll());
         } else {
-            typedPass = "";
-            kbLayer = 0;
-            wifiScreen = WifiScreen::Password;
+            listTouching = false;
+            if (!listDragged) handleWifiListClick(listStartX, listStartY);
         }
         return;
     }
-    int pages = max(1, ((int)wifiList.size() + WL_ROWS - 1) / WL_ROWS);
-    if (tapped(BTN_WL_UP) && wifiPage > 0) wifiPage--;
-    else if (tapped(BTN_WL_DOWN) && wifiPage < pages - 1) wifiPage++;
-    else if (tapped(BTN_WL_RESCAN) && !wifiScanning) startWifiScan();
+
+    if (!tapNow) return;
+    if (tapped(BTN_WL_RESCAN) && !wifiScanning) startWifiScan();
     else if (tapped(BTN_WL_PHONE)) {
         wifiScreen = WifiScreen::Phone;
         net::startPortal();

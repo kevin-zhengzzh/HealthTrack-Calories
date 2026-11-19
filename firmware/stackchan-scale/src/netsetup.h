@@ -37,6 +37,11 @@ void addNetwork(const String& ssid, const String& pass);  // newest first, max M
 int savedCount();
 String savedSsid(int i);
 void forgetAll();
+void forget(const String& ssid);      // remove one saved network (disconnects if it's the current one)
+// Disconnect on purpose: stays offline (no background reconnects) until a
+// network is joined again or Stack-chan restarts
+void disconnect();
+bool isOffByUser();
 
 // Blocking scan + connect to the strongest known network (boot only)
 bool connectBest(uint32_t timeoutMs);

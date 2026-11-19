@@ -81,8 +81,10 @@ bool scanning = false;
 String attemptSsid;            // network we're currently trying
 uint8_t lastReason = 0;        // last disconnect reason from the driver
 uint32_t lastReasonAt = 0;
+bool offByUser = false;        // disconnected from the Wi-Fi list on purpose
 
 void join(const String& ssid, const String& pass) {
+    offByUser = false;
     attemptSsid = ssid;
     WiFi.disconnect(false);
     WiFi.begin(ssid.c_str(), pass.c_str());
@@ -257,6 +259,28 @@ void forgetAll() {
     store();
 }
 
+void forget(const String& ssid) {
+    for (size_t i = 0; i < saved.size(); i++) {
+        if (saved[i].ssid != ssid) continue;
+        saved.erase(saved.begin() + i);
+        store();
+        break;
+    }
+    if (WiFi.status() == WL_CONNECTED && WiFi.SSID() == ssid) {
+        attemptSsid = "";
+        WiFi.disconnect(false, true);  // also drops the SDK's stored credentials
+    }
+}
+
+void disconnect() {
+    offByUser = true;
+    attemptSsid = "";
+    scanning = false;
+    WiFi.disconnect(false);
+}
+
+bool isOffByUser() { return offByUser; }
+
 bool connectBest(uint32_t timeoutMs) {
     if (saved.empty()) return false;
     WiFi.mode(WIFI_STA);
@@ -345,7 +369,7 @@ JoinState joinState(uint32_t timeoutMs) {
 }
 
 void maintain() {
-    if (paused || active || saved.empty() || WiFi.status() == WL_CONNECTED) {
+    if (paused || active || offByUser || saved.empty() || WiFi.status() == WL_CONNECTED) {
         scanning = false;
         return;
     }
@@ -382,6 +406,7 @@ void maintain() {
 
 String statusText() {
     if (WiFi.status() == WL_CONNECTED) return "Online: " + WiFi.SSID();
+    if (offByUser) return "Wi-Fi disconnected: Settings > Wi-Fi";
     if (saved.empty()) return "No Wi-Fi saved: Settings > Wi-Fi";
     String name = attemptSsid.length() ? attemptSsid : saved[0].ssid;
     if (!lastReasonAt || millis() - lastReasonAt > 60000) return "Connecting to " + name + "...";
