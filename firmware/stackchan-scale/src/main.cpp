@@ -1920,6 +1920,9 @@ void loop() {
             delay(10);  // keeps the phone portal's web server responsive
             return;
         }
+        // The tap that left setup is used up: Exit sits where the pairing
+        // screen's Wi-Fi button is, and would send us straight back in
+        tapNow = false;
     }
 
     net::maintain();
@@ -1942,6 +1945,7 @@ void loop() {
             delay(50);
             return;
         }
+        tapNow = false;  // same for the tap (if any) that ended pairing
     }
 
     if (accountMenuOpen) {

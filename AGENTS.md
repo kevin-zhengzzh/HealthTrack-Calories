@@ -218,6 +218,7 @@ Phase 2 的 `msa-backend` / `msa-frontend` 和它的 `neondb` 库**保持不动*
 - **"NVS 为空时从 `secrets.h` 导入"不等于只导入一次**：Reset 清空 NVS 后，设备一重启就把旧 Wi-Fi 和旧密钥又导入回来，于是不会出现配对码。改为在 `hts` 命名空间记一个 `seeded` 标记（Reset 不清除），只在第一次开机时导入。
 - **主循环里的同步 HTTP 请求会冻结屏幕**：后端最小副本为 0 时冷启动要 20–30 秒，期间画面不刷新、触摸没反应（例如 Reset 后点 Exit 像是退不出来）。配对请求和账号检查都放进 FreeRTOS 后台任务，主循环只处理结果。
 - **`net::forgetAll()` 只删保存的网络，不断开当前连接**：Reset 时要再调用 `WiFi.disconnect(false, true)`（同时清除 SDK 自己保存的凭据）。
+- **一次触摸会穿透到下一个界面**：`tapNow` 在整轮 `loop()` 里都有效。Wi-Fi 列表的 Exit 和配对界面的 Wi-Fi 按钮在同一位置，点 Exit 后同一轮里又触发了 Wi-Fi，表现为"回不去配对码"。界面切换后要把 `tapNow` 置为 false。
 - **EF Core 的 `ExecuteDeleteAsync`** 内存测试库不支持；需要在测试里跑到的代码改用加载后 `RemoveRange`。
 
 ---
