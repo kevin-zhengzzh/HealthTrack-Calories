@@ -385,15 +385,42 @@ static void drawPanel() {
     }
 }
 
+// Draws text inside a box of width w with the current font and colour.
+// If it fits it's drawn normally; if not it scrolls like a marquee: hold
+// at the start, slide left until the end is visible, hold, jump back.
+// align: top_left, middle_left or middle_center (x is the box's left edge).
+static constexpr uint32_t SCROLL_HOLD_MS = 1200;
+static constexpr int SCROLL_PX_PER_S = 40;
+
+static void drawFit(const String& s, int x, int y, int w, textdatum_t align) {
+    int tw = canvas.textWidth(s);
+    if (tw <= w) {
+        canvas.setTextDatum(align);
+        canvas.drawString(s, align == middle_center ? x + w / 2 : x, y);
+        return;
+    }
+    int overflow = tw - w;
+    uint32_t scrollMs = (uint32_t)overflow * 1000 / SCROLL_PX_PER_S;
+    uint32_t t = millis() % (SCROLL_HOLD_MS * 2 + scrollMs);
+    int off = t < SCROLL_HOLD_MS ? 0
+            : t < SCROLL_HOLD_MS + scrollMs ? (int)((t - SCROLL_HOLD_MS) * SCROLL_PX_PER_S / 1000)
+            : overflow;
+    int fh = canvas.fontHeight();
+    bool middle = align != top_left;
+    canvas.setClipRect(x, middle ? y - fh / 2 : y, w, fh + 1);
+    canvas.setTextDatum(middle ? middle_left : top_left);
+    canvas.drawString(s, x - off, y);
+    canvas.clearClipRect();
+}
+
 static void drawMessage(const String& head, uint16_t headColor, const String& sub) {
     canvas.fillRect(0, MSG_Y, PREV_W, LCD_H - MSG_Y, 0x18E3);
-    canvas.setTextDatum(top_left);
     canvas.setFont(&fonts::Font4);
     canvas.setTextColor(headColor);
-    canvas.drawString(head, 8, MSG_Y + 6);
+    drawFit(head, 8, MSG_Y + 6, PREV_W - 16, top_left);
     canvas.setFont(&fonts::Font2);
     canvas.setTextColor(TFT_WHITE);
-    canvas.drawString(sub, 8, MSG_Y + 36);
+    drawFit(sub, 8, MSG_Y + 36, PREV_W - 16, top_left);
 }
 
 static void drawButton(const Rect& r, const char* label, uint16_t bg, bool enabled = true) {
@@ -914,7 +941,8 @@ static void drawWifiList() {
         canvas.fillRoundRect(6, y, LCD_W - 52, WL_ROW_H - 4, 6, 0x2945);
         canvas.setTextDatum(middle_left);
         canvas.setTextColor(TFT_WHITE);
-        canvas.drawString(n.ssid.substring(0, 20), 14, y + (WL_ROW_H - 4) / 2);
+        // Up to the "saved" mark / signal bars
+        drawFit(n.ssid, 14, y + (WL_ROW_H - 4) / 2, (n.saved ? LCD_W - 132 : LCD_W - 98) - 14, middle_left);
         if (n.saved) {
             canvas.setFont(&fonts::Font0);
             canvas.setTextColor(TFT_GREEN);
@@ -1005,10 +1033,10 @@ static void drawKeyboard() {
     canvas.setFont(&fonts::Font2);
     if (kbNote.length()) {
         canvas.setTextColor(TFT_RED);
-        canvas.drawString(kbNote, 6, 4);
+        drawFit(kbNote, 6, 4, LCD_W - 12, top_left);
     } else {
         canvas.setTextColor(TFT_WHITE);
-        canvas.drawString("Password for " + chosenSsid.substring(0, 22), 6, 4);
+        drawFit("Password for " + chosenSsid, 6, 4, LCD_W - 12, top_left);
     }
     // Shown in clear: easier to check on a tiny keyboard, and it's your screen
     canvas.fillRoundRect(6, 24, LCD_W - 12, 32, 6, TFT_WHITE);
@@ -1072,7 +1100,7 @@ static void drawJoining() {
     canvas.drawString("Wi-Fi", 8, 4);
     canvas.setTextDatum(middle_center);
     canvas.setFont(&fonts::Font2);
-    canvas.drawString(chosenSsid, LCD_W / 2, 60);
+    drawFit(chosenSsid, 8, 60, LCD_W - 16, middle_center);
 
     canvas.setFont(&fonts::Font4);
     switch (joinResult) {
@@ -1165,8 +1193,7 @@ static void drawSetupScreen() {
              : net::savedCount() ? "Saved: " + net::savedSsid(0) : "No Wi-Fi saved yet";
     canvas.setTextColor(c);
     canvas.setFont(&fonts::Font2);
-    canvas.drawString(m.substring(0, 18), 8, LCD_H - 46);
-    if (m.length() > 18) canvas.drawString(m.substring(18, 36), 8, LCD_H - 28);
+    drawFit(m, 8, LCD_H - 36, LCD_W - 176, top_left);  // left of the Reset/Exit buttons
 
     bool armed = millis() < resetArmedUntil;
     drawButton(BTN_SETUP_RESET, armed ? "Sure?" : "Reset", armed ? (uint16_t)0xF800 : (uint16_t)0x9000);
@@ -1208,7 +1235,8 @@ static void drawPairingScreen() {
         canvas.drawString("No Wi-Fi", LCD_W / 2, 90);
         canvas.setFont(&fonts::Font2);
         canvas.setTextColor(TFT_WHITE);
-        canvas.drawString(net::statusText(), LCD_W / 2, 124);
+        drawFit(net::statusText(), 8, 124, LCD_W - 16, middle_center);
+        canvas.setTextDatum(middle_center);
         canvas.setTextColor(TFT_LIGHTGREY);
         canvas.drawString("Tap Wi-Fi to change network", LCD_W / 2, 146);
     } else if (pairCode.length() == 6) {
@@ -1235,7 +1263,7 @@ static void drawPairingScreen() {
         canvas.setTextDatum(top_left);
         canvas.setFont(&fonts::Font2);
         canvas.setTextColor(TFT_YELLOW);
-        canvas.drawString(pairMsg, 8, LCD_H - 34);
+        drawFit(pairMsg, 8, LCD_H - 34, LCD_W - 96, top_left);  // left of the Wi-Fi button
     }
     drawButton(BTN_PAIR_WIFI, "Wi-Fi", 0x2C4A);
     canvas.pushSprite(0, 0);
@@ -1345,7 +1373,7 @@ static bool upload(const uint8_t* jpg, size_t jpgLen, float grams, String& outLi
             outLine1 = "Saved " + String(grams, 1) + " g";
             outLine2 = "Name it in the Food Log";
         } else {
-            outLine1 = String(food).substring(0, 22);
+            outLine1 = food;  // long names scroll on screen
             outLine2 = String(kcal) + " kcal  (today " + String(today) + ")";
         }
         return true;
@@ -1361,7 +1389,7 @@ static bool upload(const uint8_t* jpg, size_t jpgLen, float grams, String& outLi
     }
 
     outLine1 = code > 0 ? "Error " + String(code) : "Server unreachable";
-    outLine2 = parsed ? String((const char*)(doc["message"] | "")).substring(0, 40)
+    outLine2 = parsed ? String((const char*)(doc["message"] | ""))
                       : (code > 0 ? "" : HTTPClient::errorToString(code));
     return false;
 }
