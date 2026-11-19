@@ -180,7 +180,8 @@ Phase 2 的 `msa-backend` / `msa-frontend` 和它的 `neondb` 库**保持不动*
 - **标签含义**（Food Log）：`Check me` = 模型置信度 low；`AI estimate` = medium；high 不显示；`Edited` = 用户改过；`Add details` = 没识别（无名称）。
 
 ### D-22 设备上查看并删除今天的记录；不做"识别后确认再记录"（2026-11-20）
-- **决定**：点主画面右下角的摄入圆环 → 全屏 "Today" 页（与 Settings、Wi-Fi 同样的布局，Back 在右上角）：顶部显示 `吃了 / 目标 kcal`、进度条、剩余或超出量，下面是可拖动的当天记录列表（时间、名称、kcal）；点一行出现 Delete，点两次删除。接口 `GET /api/intake/device/today?localDate=`、`DELETE /api/intake/device/{id}?localDate=`（`X-Device-Key`），都返回更新后的列表和总量。
+- **决定**：点主画面右下角的摄入圆环 → 全屏 "Today" 页（与 Settings、Wi-Fi 同样的布局，Back 在右上角）：顶部显示 `吃了 / 目标 kcal`、进度条、剩余或超出量，下面是可拖动的当天记录列表（时间、名称、kcal）；点一行像 Wi-Fi 列表那样展开（显示重量和 Delete 按钮），点两次删除。接口 `GET /api/intake/device/today?localDate=`、`DELETE /api/intake/device/{id}?localDate=`（`X-Device-Key`），都返回更新后的列表和总量。
+- **刷新与排序**：最新的排在最上面（与网页一致）；页面打开期间每 10 秒重新加载一次（网页上的删改会自动出现，展开的行按 id 保持展开），3 分钟没人碰就自动关闭，避免一直唤醒后端。
 - **范围**：设备密钥**只能删本账号当天的记录**（哪台设备记的都可以），密钥泄露也删不了历史。
 - **网络**：后台任务，与上传、账号检查互斥（一次只有一个 TLS 连接）；这两个请求本身也能验证密钥（401 → 回到配对界面），所以点圆环和在 Today 页里触摸不再额外触发账号检查。
 - **不做**：用户考虑过"识别后在设备上点 Save/Discard 再记录"，最后决定保持自动记录，记错了在设备的 Today 页或网页上删除/修改即可。

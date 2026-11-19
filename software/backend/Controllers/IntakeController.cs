@@ -176,11 +176,11 @@ public class IntakeController : ControllerBase
     {
         var rows = await _db.IntakeRecords
             .Where(r => r.UserId == userId && r.Date == date)
-            .OrderBy(r => r.CreatedAt)
+            .OrderByDescending(r => r.CreatedAt)  // newest first, like the Food Log
             .Select(r => new { r.Id, r.FoodName, r.Calories, r.WeightGrams, r.CreatedAt })
             .ToListAsync(ct);
         var meals = rows
-            .TakeLast(DeviceTodayLimit)
+            .Take(DeviceTodayLimit)
             .Select(r => new DeviceMealDto(r.Id, r.FoodName, r.Calories, r.WeightGrams,
                 new DateTimeOffset(DateTime.SpecifyKind(r.CreatedAt, DateTimeKind.Utc)).ToUnixTimeSeconds()))
             .ToList();
