@@ -165,6 +165,10 @@ static int intakeToday = -1;   // kcal, -1 = not known yet
 static int intakeGoal = 0;     // daily goal in kcal, 0 = none set
 static String intakeDate;      // local day intakeToday belongs to
 static String localDate();
+static Rect intakeRingRect = {0, 0, 0, 0};  // tap target, set when drawn
+static bool todayOpen = false;              // "Today" list (opened from the ring)
+static volatile bool todayBusy = false;     // its request is running
+static void drawToday();
 
 // On-device Wi-Fi setup
 enum class WifiScreen { List, Password, Joining, Phone };
@@ -542,12 +546,14 @@ static void drawClock() {
 // Today's intake vs the daily goal: a small ring in the image's bottom-right
 // corner, "eaten/goal" in the middle. Green until the goal, then amber.
 static void drawIntakeRing() {
+    intakeRingRect = {0, 0, 0, 0};
     if (deviceKey.isEmpty() || intakeToday < 0) return;
     String today = localDate();
     int eaten = (!today.isEmpty() && today != intakeDate) ? 0 : intakeToday;  // a new day started
     const int R = 30, T = 6;
     const int cx = PREV_W - 6 - R, cy = PREV_H - 6 - R;
-    fillRoundRectAlpha({cx - R, cy - R, 2 * R, 2 * R}, R, TFT_BLACK, 150);
+    intakeRingRect = {cx - R, cy - R, 2 * R, 2 * R};
+    fillRoundRectAlpha(intakeRingRect, R, TFT_BLACK, 150);
     canvas.fillArc(cx, cy, R - T - 1, R - 2, 0, 360, 0x4208);
     if (intakeGoal > 0 && eaten > 0) {
         bool over = eaten > intakeGoal;
@@ -664,6 +670,12 @@ static void drawSettings() {
 }
 
 static void drawScreen() {
+    if (todayOpen) {
+        accountTagRect = intakeRingRect = {0, 0, 0, 0};  // not on this screen
+        drawToday();
+        canvas.pushSprite(0, 0);
+        return;
+    }
     if (settingsOpen) {
         drawSettings();
         canvas.pushSprite(0, 0);
@@ -1041,6 +1053,12 @@ static String accountCheckUser;              // set by the task before accountCh
 static int accountCheckToday = 0, accountCheckGoal = 0;
 static String accountCheckDate;
 static bool accountChecked = false;
+// A check that got no answer (timeout, cold backend, no network) is retried
+// after 2 min, doubling up to 30 min, instead of waiting the full 6 hours.
+// No retry after 200 or 401: those are real answers.
+static constexpr uint32_t ACCOUNT_RETRY_MIN_MS = 2UL * 60 * 1000, ACCOUNT_RETRY_MAX_MS = 30UL * 60 * 1000;
+static uint32_t accountRetryMs = 0;      // current back-off, 0 = no retry pending
+static uint32_t accountRetryFrom = 0;    // when the failed check finished
 static uint32_t lastAccountCheck = 0;
 
 static void accountCheckTask(void* arg) {
@@ -1115,7 +1133,7 @@ static void unpairDevice() {
 }
 
 static void startAccountCheck() {
-    if (accountCheckBusy || deviceKey.isEmpty() || WiFi.status() != WL_CONNECTED || state == State::Uploading)
+    if (accountCheckBusy || todayBusy || deviceKey.isEmpty() || WiFi.status() != WL_CONNECTED || state == State::Uploading)
         return;
     accountCheckBusy = true;
     accountChecked = true;
@@ -1131,6 +1149,13 @@ static void accountLoop() {
     if (code != 0) {
         accountCheckResult = 0;
         Serial.printf("Account check: %d '%s'\n", code, accountCheckUser.c_str());
+        if (code == 200 || code == 401) {
+            accountRetryMs = 0;
+        } else {
+            accountRetryMs = accountRetryMs ? min(accountRetryMs * 2, ACCOUNT_RETRY_MAX_MS) : ACCOUNT_RETRY_MIN_MS;
+            accountRetryFrom = millis();
+            Serial.printf("Account check: retrying in %lu s\n", (unsigned long)(accountRetryMs / 1000));
+        }
         if (code == 200 && !deviceKey.isEmpty()) {
             if (!accountCheckUser.isEmpty() && accountCheckUser != ownerName) saveOwnerName(accountCheckUser);
             intakeToday = accountCheckToday;
@@ -1140,7 +1165,285 @@ static void accountLoop() {
             clearDeviceKey();  // removed on the website: the loop switches to pairing
     }
     // Once after boot, then every few hours
-    if (!accountChecked || millis() - lastAccountCheck >= ACCOUNT_CHECK_MS) startAccountCheck();
+    if (!accountChecked || millis() - lastAccountCheck >= ACCOUNT_CHECK_MS
+        || (accountRetryMs && millis() - accountRetryFrom >= accountRetryMs))
+        startAccountCheck();
+}
+
+// ---------------------------------------------------------------- today's list
+// Tapping the ring opens today's meals (GET /api/intake/device/today); a meal
+// can be deleted there (DELETE /api/intake/device/{id}, today's only). Both
+// answer with the updated list and totals. Requests run in a task, one at a
+// time, and never alongside an upload or an account check.
+struct Meal { int id; String name; int kcal; time_t at; };
+static std::vector<Meal> todayMeals;
+static bool todayLoaded = false;        // list fetched since the screen opened
+static String todayError;
+static bool todayWantFetch = false;     // request waiting for the network
+static int todayWantDelete = 0;         // meal id waiting to be deleted
+static int todayDeleting = 0;           // meal id being deleted right now
+static volatile int todayResult = 0;    // HTTP status of a finished request, 0 = none
+static String todayBody;                // response, set before todayResult
+static String todayReqDate;             // local day the request was made for
+static int todayScroll = 0, todaySel = -1;
+static uint32_t deleteArmedUntil = 0;
+static bool todayTouching = false, todayDragged = false;
+static int todayStartX = 0, todayStartY = 0, todayStartScroll = 0;
+
+static constexpr int TD_ROW_Y = 84, TD_VIEW_H = LCD_H - 4 - TD_ROW_Y;
+static constexpr int TD_ROW_H = 36, TD_CARD_H = 32, TD_X = 6, TD_W = LCD_W - 18;
+
+struct TodayReq { String key, date; int deleteId; };
+
+static void todayTask(void* arg) {
+    TodayReq* req = (TodayReq*)arg;
+    int code = -1;
+    String body;
+    {
+        HTTPClient http;
+        WiFiClient plain;
+        WiFiClientSecure secure;
+        String url = String(API_BASE_URL) + "/api/intake/device/"
+                   + (req->deleteId ? String(req->deleteId) : String("today"));
+        if (!req->date.isEmpty()) url += "?localDate=" + req->date;
+        if (beginHttp(http, plain, secure, url)) {
+            http.setTimeout(HTTP_TIMEOUT);
+            http.addHeader("X-Device-Key", req->key);
+            code = req->deleteId ? http.sendRequest("DELETE") : http.GET();
+            if (code > 0) body = http.getString();
+            http.end();
+        }
+    }
+    Serial.printf("Today %s: %d\n", req->deleteId ? "delete" : "list", code);
+    delete req;
+    todayBody = body;
+    todayResult = code == 0 ? -1 : code;
+    todayBusy = false;
+    vTaskDelete(nullptr);
+}
+
+static void openToday() {
+    todayOpen = true;
+    todayLoaded = false;
+    todayError = "";
+    todayMeals.clear();
+    todayScroll = 0;
+    todaySel = -1;
+    todayWantFetch = true;
+    todayWantDelete = 0;
+    deleteArmedUntil = 0;
+    todayTouching = false;
+    if (aimVisible) hideAim();
+    if (state == State::Settling) state = State::Idle;  // no photos while it's open
+}
+
+static void applyToday(const String& body, const String& date) {
+    JsonDocument doc;
+    if (deserializeJson(doc, body)) {
+        todayError = "Bad answer from the server";
+        return;
+    }
+    intakeToday = doc["todayCalories"] | 0;
+    intakeGoal = doc["dailyGoal"] | 0;
+    intakeDate = date;
+    todayMeals.clear();
+    for (JsonObject m : doc["meals"].as<JsonArray>()) {
+        String name = (const char*)(m["foodName"] | "");
+        if (name.isEmpty()) name = "Unnamed food";
+        todayMeals.push_back({m["id"] | 0, name, m["calories"] | 0, (time_t)(m["createdAtUnix"] | 0LL)});
+    }
+    todayLoaded = true;
+    todayError = "";
+}
+
+static int todayMaxScroll() { return max(0, (int)todayMeals.size() * TD_ROW_H - TD_VIEW_H); }
+
+static void todayLoop() {
+    int code = todayResult;
+    if (code != 0) {
+        todayResult = 0;
+        int deleted = todayDeleting;
+        todayDeleting = 0;
+        if (code == 200) {
+            applyToday(todayBody, todayReqDate);
+            // Counts as an account check: the key works
+            lastAccountCheck = millis();
+            accountRetryMs = 0;
+            if (deleted) todaySel = -1;
+            todayScroll = constrain(todayScroll, 0, todayMaxScroll());
+        } else if (code == 401) {
+            clearDeviceKey();  // removed on the website: the loop switches to pairing
+        } else if (code == 404 && deleted) {
+            todayWantFetch = true;  // already gone (deleted on the website?): reload
+            todaySel = -1;
+        } else {
+            todayError = deleted ? "Couldn't delete, try again" : "Couldn't reach the server";
+        }
+    }
+
+    if (!todayOpen || todayBusy || (!todayWantFetch && !todayWantDelete)) return;
+    if (WiFi.status() != WL_CONNECTED) {
+        todayError = "Offline";
+        return;
+    }
+    if (accountCheckBusy || state == State::Uploading || deviceKey.isEmpty()) return;  // one TLS connection at a time
+
+    TodayReq* req = new TodayReq{deviceKey, localDate(), todayWantDelete};
+    todayReqDate = req->date;
+    todayBusy = true;
+    if (xTaskCreate(todayTask, "today", 12288, req, 1, nullptr) != pdPASS) {
+        delete req;
+        todayBusy = false;
+        todayError = "Out of memory";
+        return;
+    }
+    todayDeleting = todayWantDelete;
+    todayWantDelete = 0;
+    todayWantFetch = false;
+}
+
+static Rect todayDeleteRect(int rowY) { return {TD_X + TD_W - 80, rowY + 3, 76, TD_CARD_H - 6}; }
+
+static void drawToday() {
+    canvas.fillSprite(0x10A2);
+
+    // Rows first; title and summary are painted over what scrolls under them
+    if (todayLoaded) {
+        for (int i = 0; i < (int)todayMeals.size(); i++) {
+            int y = TD_ROW_Y + i * TD_ROW_H - todayScroll;
+            if (y + TD_CARD_H < TD_ROW_Y || y > TD_ROW_Y + TD_VIEW_H) continue;
+            const Meal& m = todayMeals[i];
+            bool sel = i == todaySel;
+            canvas.fillRoundRect(TD_X, y, TD_W, TD_CARD_H, 6, sel ? 0x3186 : 0x2945);
+            int midY = y + TD_CARD_H / 2;
+            // Time
+            char hhmm[6] = "";
+            if (m.at > 0) {
+                struct tm t;
+                localtime_r(&m.at, &t);
+                strftime(hhmm, sizeof hhmm, "%H:%M", &t);
+            }
+            canvas.setFont(&fonts::Font0);
+            canvas.setTextColor(TFT_LIGHTGREY);
+            canvas.setTextDatum(middle_left);
+            canvas.drawString(hhmm, TD_X + 8, midY);
+            // kcal on the right, left of the Delete button when selected
+            int right = sel ? todayDeleteRect(y).x - 6 : TD_X + TD_W - 8;
+            canvas.setFont(&fonts::Font2);
+            canvas.setTextColor(TFT_WHITE);
+            canvas.setTextDatum(middle_right);
+            String kcal = String(m.kcal) + " kcal";
+            canvas.drawString(kcal, right, midY);
+            int nameX = TD_X + 44;
+            drawFit(m.name, nameX, midY, right - (int)canvas.textWidth(kcal) - 10 - nameX, middle_left);
+            if (sel) {
+                bool busy = todayDeleting == m.id || todayWantDelete == m.id;
+                bool armed = millis() < deleteArmedUntil;
+                drawButton(todayDeleteRect(y), busy ? "..." : armed ? "Sure?" : "Delete",
+                           armed || busy ? (uint16_t)0xF800 : (uint16_t)0x9000, !busy);
+            }
+        }
+        int maxScroll = todayMaxScroll();
+        if (maxScroll > 0) {
+            int content = TD_VIEW_H + maxScroll;
+            int barH = max(16, TD_VIEW_H * TD_VIEW_H / content);
+            int barY = TD_ROW_Y + (TD_VIEW_H - barH) * todayScroll / maxScroll;
+            canvas.fillRoundRect(LCD_W - 7, barY, 4, barH, 2, TFT_DARKGREY);
+        }
+    }
+
+    canvas.fillRect(0, 0, LCD_W, TD_ROW_Y - 2, 0x10A2);
+    canvas.fillRect(0, TD_ROW_Y + TD_VIEW_H, LCD_W, LCD_H - TD_ROW_Y - TD_VIEW_H, 0x10A2);
+    canvas.setTextDatum(middle_left);
+    canvas.setFont(&fonts::Font4);
+    canvas.setTextColor(TFT_WHITE);
+    canvas.drawString("Today", 10, 21);
+    drawButton(BTN_SET_BACK, "Back", 0x2C4A);
+
+    // Summary: eaten / goal, bar, kcal left or over
+    if (intakeToday >= 0) {
+        bool over = intakeGoal > 0 && intakeToday > intakeGoal;
+        uint16_t accent = over ? (uint16_t)0xFD20 : (uint16_t)TFT_GREEN;
+        canvas.setFont(&fonts::Font2);
+        canvas.setTextDatum(middle_left);
+        canvas.setTextColor(over ? accent : (uint16_t)TFT_WHITE);
+        String head = String(intakeToday) + (intakeGoal > 0 ? " / " + String(intakeGoal) : String("")) + " kcal";
+        canvas.drawString(head, 10, 54);
+        if (intakeGoal > 0) {
+            canvas.setTextDatum(middle_right);
+            canvas.setTextColor(TFT_LIGHTGREY);
+            canvas.drawString(over ? String(intakeToday - intakeGoal) + " over" : String(intakeGoal - intakeToday) + " left",
+                              LCD_W - 10, 54);
+            int w = LCD_W - 20;
+            canvas.fillRoundRect(10, 68, w, 6, 3, 0x4208);
+            int fill = over ? w : w * intakeToday / intakeGoal;
+            if (fill > 0) canvas.fillRoundRect(10, 68, max(fill, 6), 6, 3, accent);
+        }
+    }
+
+    canvas.setFont(&fonts::Font2);
+    canvas.setTextDatum(middle_center);
+    int msgY = TD_ROW_Y + 50;
+    if (!todayError.isEmpty() && !todayLoaded) {
+        canvas.setTextColor(TFT_ORANGE);
+        canvas.drawString(todayError, LCD_W / 2, msgY);
+    } else if (!todayLoaded) {
+        canvas.setTextColor(TFT_WHITE);
+        canvas.drawString("Loading...", LCD_W / 2, msgY);
+    } else if (todayMeals.empty()) {
+        canvas.setTextColor(TFT_LIGHTGREY);
+        canvas.drawString("Nothing logged yet today", LCD_W / 2, msgY);
+    } else if (!todayError.isEmpty()) {
+        // Loaded, but the last delete failed: say so over the bottom edge
+        fillRoundRectAlpha({20, LCD_H - 30, LCD_W - 40, 24}, 12, TFT_BLACK, 200);
+        canvas.setTextColor(TFT_ORANGE);
+        canvas.drawString(todayError, LCD_W / 2, LCD_H - 18);
+    }
+}
+
+static void handleTodayTap() {
+    // List: drag to scroll; a press released without moving is a tap
+    if (tapNow && tapY >= TD_ROW_Y && todayLoaded) {
+        todayTouching = true;
+        todayDragged = false;
+        todayStartX = tapX;
+        todayStartY = tapY;
+        todayStartScroll = todayScroll;
+        return;
+    }
+    if (todayTouching) {
+        if (touchHeld) {
+            int dy = tapY - todayStartY;
+            if (abs(dy) > 8) todayDragged = true;
+            if (todayDragged) todayScroll = constrain(todayStartScroll - dy, 0, todayMaxScroll());
+            return;
+        }
+        todayTouching = false;
+        if (todayDragged) return;
+        int i = (todayStartY - TD_ROW_Y + todayScroll) / TD_ROW_H;
+        if (i < 0 || i >= (int)todayMeals.size()) return;
+        int y = TD_ROW_Y + i * TD_ROW_H - todayScroll;
+        if (todayStartY > y + TD_CARD_H) return;  // the gap between rows
+        Rect del = todayDeleteRect(y);
+        bool onDelete = i == todaySel && todayStartX >= del.x && todayStartX < del.x + del.w;
+        if (!onDelete) {
+            todaySel = i == todaySel ? -1 : i;  // tap a row to show / hide Delete
+            deleteArmedUntil = 0;
+        } else if (todayDeleting || todayWantDelete) {
+            // a delete is already on its way
+        } else if (millis() < deleteArmedUntil) {
+            todayWantDelete = todayMeals[i].id;
+            deleteArmedUntil = 0;
+            todayError = "";
+        } else {
+            deleteArmedUntil = millis() + 3000;
+        }
+        return;
+    }
+    if (tapped(BTN_SET_BACK)) {
+        todayOpen = false;
+        todayTouching = false;
+    }
 }
 
 // ---------------------------------------------------------------- pairing code
@@ -2080,6 +2383,7 @@ void loop() {
         mode = Mode::Pairing;
         settingsOpen = false;
         accountMenuOpen = false;
+        todayOpen = false;
         if (aimVisible) hideAim();
         state = State::Idle;
     }
@@ -2100,7 +2404,9 @@ void loop() {
     // Someone is using the device: a good moment to notice it was removed on
     // the website (a 401 sends it to the pairing screen). Costs nothing while
     // nobody touches it.
-    if (tapNow && millis() - lastAccountCheck >= ACCOUNT_RECHECK_MIN_MS) startAccountCheck();
+    if (tapNow && !todayOpen && !tapped(intakeRingRect) && millis() - lastAccountCheck >= ACCOUNT_RECHECK_MIN_MS)
+        startAccountCheck();
+    todayLoop();
 
     if (accountMenuOpen) {
         if (tapNow) {
@@ -2122,6 +2428,10 @@ void loop() {
         unpairArmedUntil = 0;
         if (aimVisible) hideAim();
         if (state == State::Settling) state = State::Idle;  // no photos while it's open
+    } else if (todayOpen) {
+        handleTodayTap();
+    } else if (intakeRingRect.w > 0 && state != State::Uploading && !settingsOpen && tapped(intakeRingRect)) {
+        openToday();
     } else if (settingsOpen) {
         handleSettingsTap();
         if (mode == Mode::WifiSetup) return;  // Wi-Fi button: draw its screen next loop
@@ -2144,7 +2454,7 @@ void loop() {
     // photo that was just uploaded stays on screen
     bool holdingPhoto = (state == State::Result || state == State::Error)
                         && millis() - resultSince < RESULT_PHOTO_MS;
-    if (cameraOk && state != State::Uploading && !holdingPhoto && !settingsOpen) {
+    if (cameraOk && state != State::Uploading && !holdingPhoto && !settingsOpen && !todayOpen) {
         camera_fb_t* fb = esp_camera_fb_get();
         if (fb) {
             downscale((const uint16_t*)fb->buf);
@@ -2154,7 +2464,7 @@ void loop() {
 
     switch (state) {
         case State::Idle:
-            if (!settingsOpen && !aimVisible && !accountMenuOpen && !zeroing() && weight >= MIN_FOOD_GRAMS) {
+            if (!settingsOpen && !todayOpen && !aimVisible && !accountMenuOpen && !zeroing() && weight >= MIN_FOOD_GRAMS) {
                 state = State::Settling;
                 settleRef = weight;
                 settleSince = millis();
@@ -2173,7 +2483,7 @@ void loop() {
                     line1 = "Camera not ready";
                     line2 = "Restart Stack-chan";
                     resultSince = millis();
-                } else if (WiFi.status() == WL_CONNECTED && !accountCheckBusy) {
+                } else if (WiFi.status() == WL_CONNECTED && !accountCheckBusy && !todayBusy) {
                     captureAndUpload();
                     resultSince = millis();
                 }
