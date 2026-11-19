@@ -973,7 +973,7 @@ static void clearDeviceKey() {
 // Not a frequent heartbeat: every request wakes the backend and database,
 // which then stay billed for several minutes.
 static constexpr uint32_t ACCOUNT_CHECK_MS = 6UL * 60 * 60 * 1000;  // when idle
-static constexpr uint32_t ACCOUNT_RECHECK_MIN_MS = 60 * 1000;        // on opening settings
+static constexpr uint32_t ACCOUNT_RECHECK_MIN_MS = 60 * 1000;        // on a touch, at most this often
 static volatile bool accountCheckBusy = false;
 static volatile int accountCheckResult = 0;  // HTTP status of a finished check, 0 = none
 static String accountCheckUser;              // set by the task before accountCheckResult
@@ -2018,6 +2018,11 @@ void loop() {
         tapNow = false;  // same for the tap (if any) that ended pairing
     }
 
+    // Someone is using the device: a good moment to notice it was removed on
+    // the website (a 401 sends it to the pairing screen). Costs nothing while
+    // nobody touches it.
+    if (tapNow && millis() - lastAccountCheck >= ACCOUNT_RECHECK_MIN_MS) startAccountCheck();
+
     if (accountMenuOpen) {
         if (tapNow) {
             if (tapped(BTN_UNPAIR)) {
@@ -2038,7 +2043,6 @@ void loop() {
         unpairArmedUntil = 0;
         if (aimVisible) hideAim();
         if (state == State::Settling) state = State::Idle;  // no photos while it's open
-        if (ownerName.isEmpty() && millis() - lastAccountCheck >= ACCOUNT_RECHECK_MIN_MS) startAccountCheck();
     } else if (settingsOpen) {
         handleSettingsTap();
         if (mode == Mode::WifiSetup) return;  // Wi-Fi button: draw its screen next loop
@@ -2049,7 +2053,6 @@ void loop() {
             settingsOpen = true;
             powerArmedUntil = 0;
             unpairArmedUntil = 0;
-            if (millis() - lastAccountCheck >= ACCOUNT_RECHECK_MIN_MS) startAccountCheck();
             if (state == State::Settling) state = State::Idle;  // no photos while adjusting
         } else if (scaleOk && tapped({TARE_X, TARE_Y, TARE_W, TARE_H})) {
             Serial.println("TARE tapped");
