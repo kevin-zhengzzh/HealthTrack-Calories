@@ -25,7 +25,7 @@ firmware/stackchan-scale/   PlatformIO 固件（Arduino on ESP32-S3）
   src/head.cpp       舵机（SCS0009）+ PY32 IO 扩展芯片供电
   lib/FTServo/       飞特舵机库（MIT，来自 m5stack/StackChan，有 IDF 4.4 兼容补丁）
   include/secrets.h  Wi-Fi、后端地址、设备密钥（git 忽略；模板 secrets.example.h）
-.github/workflows/   ci.yml（每次 push/PR 到 main），deploy.yml（目前仅手动触发）
+.github/workflows/   ci.yml（每次 push/PR 到 main），deploy.yml（main 上 CI 通过后自动部署，也可手动触发）
 specs/               Phase 2 的规划、提示词日志、设计决策
 ```
 
@@ -158,10 +158,10 @@ Phase 2 的 `msa-backend` / `msa-frontend` 和它的 `neondb` 库**保持不动*
 - **决定**：`drawFit(text, x, y, width, align)`：放得下就正常显示；放不下就在裁剪框内像跑马灯一样滚动——停 1.2 秒，以 40px/s 向左滚到末尾，停 1.2 秒，回到开头。用在底部消息栏（识别结果、状态提示）、Wi-Fi 列表的网络名、键盘标题、连接页的网络名、配网状态、配对提示。去掉了之前所有 `substring` 截断（食物名、错误信息等）。
 - **原因**：用户反馈文字被截断；网络名、食物名、错误信息的长度都不可控。
 
-### D-14 部署工作流暂时只能手动触发（2026-11-18，部分已完成）
+### D-14 部署工作流暂时只能手动触发（2026-11-18；2026-11-19 已恢复自动部署）
 - **决定**：`deploy.yml` 只保留 `workflow_dispatch`。
 - **原因**：最初镜像名和应用名都指向 Phase 2，自动部署会覆盖线上服务。现在已改为 `healthtrack-*`，并且首次部署已成功。
-- **待办**：恢复 `workflow_run`（CI 通过后自动部署）。
+- **后续（2026-11-19）**：恢复 `workflow_run`：main 上 CI 通过后自动部署（合并 PR 即上线），保留手动触发。
 
 ---
 
@@ -209,7 +209,7 @@ Phase 2 的 `msa-backend` / `msa-frontend` 和它的 `neondb` 库**保持不动*
 
 - [ ] 用 Stack-chan **实拍真实食物**测试识别效果（目前只测过网图和非食物）
 - [ ] 相机对准：秤放在 Stack-chan 前方 20–30cm，用摇杆调整
-- [ ] 恢复 CI 通过后自动部署（D-14）
+- [x] 恢复 CI 通过后自动部署（D-14）
 - [x] 手机配网（D-16）、配对码（D-15）—— 待部署后在真机上验证配对流程
 - [ ] HTTPS 证书校验（目前 `setInsecure()`，见 `beginHttp` 的 TODO）
 - [ ] 上传失败暂存 + 补传（带实际称重时间）
