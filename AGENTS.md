@@ -241,7 +241,7 @@ Phase 2 的 `msa-backend` / `msa-frontend` 和它的 `neondb` 库**保持不动*
 - **主循环里的同步 HTTP 请求会冻结屏幕**：后端最小副本为 0 时冷启动要 20–30 秒，期间画面不刷新、触摸没反应（例如 Reset 后点 Exit 像是退不出来）。配对请求和账号检查都放进 FreeRTOS 后台任务，主循环只处理结果。
 - **`net::forgetAll()` 只删保存的网络，不断开当前连接**：Reset 时要再调用 `WiFi.disconnect(false, true)`（同时清除 SDK 自己保存的凭据）。
 - **一次触摸会穿透到下一个界面**：`tapNow` 在整轮 `loop()` 里都有效。Wi-Fi 列表的 Exit 和配对界面的 Wi-Fi 按钮在同一位置，点 Exit 后同一轮里又触发了 Wi-Fi，表现为"回不去配对码"。界面切换后要把 `tapNow` 置为 false。
-- **Bash heredoc 里的 Python 补丁脚本会把 `\\n` 变成真换行**：C++ 字符串里的 `\n` 被破坏，断言失败（或更糟，悄悄写坏文件）。补丁脚本先写到 scratchpad 的 `.py` 文件再运行；文件是 CRLF，脚本里先转 LF、写回时再转 CRLF。
+- **Bash heredoc 里的 Python 补丁脚本会把 `\n` 变成真换行**：C++ 字符串里的 `\n` 被破坏，断言失败（或更糟，悄悄写坏文件）。补丁脚本先写到 scratchpad 的 `.py` 文件再运行；文件是 CRLF，脚本里先转 LF、写回时再转 CRLF。
 - **读串口要用不带 `-I` 的 python**：pyserial 装在用户 site-packages，`python -I` 找不到。串口日志几乎被 `cam_hal: EV-EOF-OVF` 刷屏，要用 grep 过滤（见待办）。
 - **开机那次账号检查失败 → 摄入圆环不出现**：圆环要有数据才画；原来失败后要等 6 小时才重试（已改为退避重试，D-19）。
 - **固件里函数/变量的定义顺序**：`main.cpp` 是单文件，新代码用到后面才定义的东西（`inRect`、`todayBusy`、`localDate`）会编译失败；把定义挪到前面或加前置声明。
