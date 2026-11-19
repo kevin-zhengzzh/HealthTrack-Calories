@@ -175,6 +175,7 @@ Phase 2 的 `msa-backend` / `msa-frontend` 和它的 `neondb` 库**保持不动*
 - **决定**：`Users.DailyIntakeGoal`（可空，null = 未设置），在 Food Log 的 "Eaten today" 卡片里设置/清除（`PUT /api/user/intake-goal`，1–20000）；**不按天存**——设一次之后每天都沿用，直到再改。Dashboard 新增 "Today's intake" 环形图：整圈 = 目标，每餐一段（按当天顺序配色），超过目标时整圈按总量分配、数字变琥珀色；未设目标时提示去 Food Log 设置。
 - **原因**：用户要求"设定后没改就顺延"；只看今天，不需要历史目标。
 - **代价**：改目标后，过去几天如果以后要显示"当天目标"就无从得知；需要时再改成带生效日期的表。
+- **设备上**：主画面右下角一个小圆环，中间 `吃了/目标`（未设目标时显示 `kcal`），超过目标变琥珀色。数据来自上传返回和 `GET /api/device/me?localDate=`（两者都新增 `todayCalories` / `dailyGoal`），**不额外轮询**——网页上的修改要等下一次账号检查（触摸、开机、每 6 小时）才更新；过了本地午夜自动显示 0。
 - **标签含义**（Food Log）：`Check me` = 模型置信度 low；`AI estimate` = medium；high 不显示；`Edited` = 用户改过；`Add details` = 没识别（无名称）。
 
 ### D-14 部署工作流暂时只能手动触发（2026-11-18；2026-11-19 已恢复自动部署）

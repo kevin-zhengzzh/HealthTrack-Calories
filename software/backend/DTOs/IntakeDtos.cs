@@ -17,8 +17,9 @@ public record PairingPollRequest(string PairingToken);
 // Status: "pending" | "paired" (Key set, returned once) | "expired"
 public record PairingPollResult(string Status, string? Key, string? DeviceName, string? Username = null);
 
-// GET /api/device/me — asked by the device itself
-public record DeviceSelfDto(string Name, string Username);
+// GET /api/device/me — asked by the device itself. Also carries today's
+// intake and the daily goal for the ring on its screen.
+public record DeviceSelfDto(string Name, string Username, int TodayCalories = 0, int? DailyGoal = null);
 
 public record IntakeRecordDto(
     int Id,
@@ -35,4 +36,5 @@ public record IntakeRecordDto(
 public record UpdateIntakeRequest(string FoodName, double WeightGrams, double CaloriesPer100g);
 
 // Kept small and flat: it is parsed on a microcontroller and shown on a 320x240 screen
-public record DeviceUploadResult(bool IsFood, int? Id, string FoodName, double WeightGrams, int Calories, int TodayCalories, string Message);
+// DailyGoal: the user's daily intake goal (null = not set), for the ring on the device
+public record DeviceUploadResult(bool IsFood, int? Id, string FoodName, double WeightGrams, int Calories, int TodayCalories, string Message, int? DailyGoal = null);

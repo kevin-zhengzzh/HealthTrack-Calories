@@ -206,6 +206,26 @@ public class DevicePairingControllerTests
         Assert.IsType<UnauthorizedObjectResult>(await controller.Me(null));
     }
 
+    [Fact]
+    public async Task DeviceMe_ReportsTodaysIntakeAndTheGoal()
+    {
+        using var db = NewDb();
+        var key = DeviceKeys.Generate();
+        db.Devices.Add(new Device { UserId = Me, Name = "Stack-chan", KeyHash = DeviceKeys.Hash(key) });
+        var today = DateOnly.FromDateTime(DateTime.UtcNow);
+        db.IntakeRecords.AddRange(
+            new IntakeRecord { UserId = Me, FoodName = "rice", Calories = 300, Date = today },
+            new IntakeRecord { UserId = Me, FoodName = "apple", Calories = 80, Date = today },
+            new IntakeRecord { UserId = Me, FoodName = "cake", Calories = 500, Date = today.AddDays(-1) },
+            new IntakeRecord { UserId = SomeoneElse, FoodName = "pizza", Calories = 900, Date = today });
+        (await db.Users.FindAsync(Me))!.DailyIntakeGoal = 1700;
+        await db.SaveChangesAsync();
+
+        var me = Body<DeviceSelfDto>(await new DeviceController(db).Me(key, today.ToString("yyyy-MM-dd")));
+        Assert.Equal(380, me.TodayCalories);
+        Assert.Equal(1700, me.DailyGoal);
+    }
+
     private static async Task<string> PairFully(AppDbContext db, IMemoryCache cache, int userId, string? hardwareId)
     {
         var started = Body<PairingStartResult>(await NewController(db, cache).Start(new PairingStartRequest(null, hardwareId)));

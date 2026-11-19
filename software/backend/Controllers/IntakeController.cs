@@ -106,7 +106,7 @@ public class IntakeController : ControllerBase
 
             var totalSoFar = await TodayTotal(userId, date, ct);
             return Ok(new DeviceUploadResult(true, raw.Id, string.Empty, raw.WeightGrams, 0, totalSoFar,
-                $"Saved {raw.WeightGrams} g"));
+                $"Saved {raw.WeightGrams} g", await DailyGoal(userId, ct)));
         }
 
         var usedToday = await _db.AiUsageLogs.CountAsync(
@@ -136,7 +136,7 @@ public class IntakeController : ControllerBase
             await _usage.SaveAsync(userId, AiFeatures.FoodRecognition, success: true);
             var todaySoFar = await TodayTotal(userId, date, ct);
             return Ok(new DeviceUploadResult(false, null, string.Empty, weightGrams, 0, todaySoFar,
-                "No food recognised. Nothing was logged."));
+                "No food recognised. Nothing was logged.", await DailyGoal(userId, ct)));
         }
 
         var record = new IntakeRecord
@@ -158,7 +158,7 @@ public class IntakeController : ControllerBase
 
         var total = await TodayTotal(userId, date, ct);
         return Ok(new DeviceUploadResult(true, record.Id, record.FoodName, record.WeightGrams, record.Calories, total,
-            $"{record.FoodName}: {record.Calories} kcal"));
+            $"{record.FoodName}: {record.Calories} kcal", await DailyGoal(userId, ct)));
     }
 
     private static async Task<byte[]> ReadAllAsync(IFormFile file, CancellationToken ct)
@@ -168,8 +168,13 @@ public class IntakeController : ControllerBase
         return ms.ToArray();
     }
 
-    private Task<int> TodayTotal(int userId, DateOnly date, CancellationToken ct) =>
-        _db.IntakeRecords.Where(r => r.UserId == userId && r.Date == date).SumAsync(r => r.Calories, ct);
+    internal static Task<int> TodayTotal(AppDbContext db, int userId, DateOnly date, CancellationToken ct) =>
+        db.IntakeRecords.Where(r => r.UserId == userId && r.Date == date).SumAsync(r => r.Calories, ct);
+
+    private Task<int> TodayTotal(int userId, DateOnly date, CancellationToken ct) => TodayTotal(_db, userId, date, ct);
+
+    private Task<int?> DailyGoal(int userId, CancellationToken ct) =>
+        _db.Users.Where(u => u.Id == userId).Select(u => u.DailyIntakeGoal).FirstOrDefaultAsync(ct);
 
     // ---- Signed-in user ----
 
