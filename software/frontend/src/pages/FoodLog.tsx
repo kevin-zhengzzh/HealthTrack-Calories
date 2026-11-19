@@ -5,7 +5,7 @@ import { useLockBodyScroll } from '../hooks/useLockBodyScroll'
 import type { CreatedDevice, Device, IntakeRecord } from '../types'
 
 // Devices push meals in the background, so poll while the tab is visible
-const POLL_MS = 15_000
+const POLL_MS = 5_000
 
 function localDateStr(d = new Date()) {
   const y = d.getFullYear()

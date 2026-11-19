@@ -182,6 +182,8 @@ Phase 2 的 `msa-backend` / `msa-frontend` 和它的 `neondb` 库**保持不动*
 | 2026-11-19 | Stack-chan 改连线上 HTTPS 后端，重新烧录 |
 | 2026-11-19 | 新建 AGENTS.md |
 | 2026-11-19 | 分支 `feature/device-setup`：配对码接口 + 迁移 `AddDevicePairing` + 9 个测试（共 112 个）；网页"Add device"输入配对码；固件手机配网、多网络保存、配对界面、401 回到配对；已烧录，旧配置自动导入 NVS |
+| 2026-11-19 | PR #2 合并，CI 通过后自动部署成功（Deploy #3） |
+| 2026-11-19 | 分支 `fix/pairing-polish`：Reset 后不再重新导入 `secrets.h`；配对后设备显示账号名；Food Log 改为 5 秒刷新 |
 
 ---
 
@@ -201,6 +203,7 @@ Phase 2 的 `msa-backend` / `msa-frontend` 和它的 `neondb` 库**保持不动*
 - **固件工具链默认 C++11**：lambda 参数不能写 `auto`。
 - **ESP32 只支持 2.4GHz**：双频合一（2.4G/5G 同名）的网络可以看到也能连上（只会连 2.4G）；分开命名时只会看到 2.4G 那个；只发 5G 的网络或扩展器（例如家里的 `DN8245-2CD9_5GEXT`）看不到。隐藏网络不会出现在设备列表里，目前只能在手机配网页面手动输入。
 - **ESP32 只有一个无线电**：AP+STA 模式下，热点必须和 STA 用同一信道。STA 一扫描或连上别的信道的路由器，热点就会跟着跳，连着的手机就会掉线。配网期间要让 STA 保持安静。
+- **"NVS 为空时从 `secrets.h` 导入"不等于只导入一次**：Reset 清空 NVS 后，设备一重启就把旧 Wi-Fi 和旧密钥又导入回来，于是不会出现配对码。改为在 `hts` 命名空间记一个 `seeded` 标记（Reset 不清除），只在第一次开机时导入。
 - **EF Core 的 `ExecuteDeleteAsync`** 内存测试库不支持；需要在测试里跑到的代码改用加载后 `RemoveRange`。
 
 ---

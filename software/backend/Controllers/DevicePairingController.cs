@@ -167,7 +167,9 @@ public class DevicePairingController : ControllerBase
         pairing.CompletedAt = now;
         await _db.SaveChangesAsync();
 
-        return Ok(new PairingPollResult("paired", key, device.Name));
+        // So the device can show whose account it now logs meals to
+        var username = await _db.Users.Where(u => u.Id == device.UserId).Select(u => u.Username).FirstOrDefaultAsync();
+        return Ok(new PairingPollResult("paired", key, device.Name, username));
     }
 
     private static string Clean(string? name)
