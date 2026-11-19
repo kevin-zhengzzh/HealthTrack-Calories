@@ -1,13 +1,13 @@
 name: Deploy
 
 # Deploys to its own Container Apps, separate from the Phase 2 deployment
-# (msa-backend / msa-frontend), which stays untouched. Manual only until the
-# first deploy has succeeded; then add the automatic trigger back:
-#   workflow_run:
-#     workflows: [CI]
-#     types: [completed]
-#     branches: [main]
+# (msa-backend / msa-frontend), which stays untouched. Runs after CI passes
+# on main (i.e. after a PR is merged), or manually from the Actions tab.
 on:
+  workflow_run:
+    workflows: [CI]
+    types: [completed]
+    branches: [main]
   workflow_dispatch:
 
 env:

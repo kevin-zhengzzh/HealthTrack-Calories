@@ -31,7 +31,8 @@ public class DeviceController : ControllerBase
         var devices = await _db.Devices
             .Where(d => d.UserId == UserId && d.RevokedAt == null)
             .OrderBy(d => d.CreatedAt)
-            .Select(d => new DeviceDto(d.Id, d.Name, d.KeyPrefix, d.CreatedAt, d.LastSeenAt))
+            .Select(d => new DeviceDto(d.Id, d.Name, d.KeyPrefix, d.CreatedAt, d.LastSeenAt,
+                d.KeyHash.StartsWith("pending-")))
             .ToListAsync();
         return Ok(devices);
     }

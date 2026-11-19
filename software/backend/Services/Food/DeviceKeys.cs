@@ -19,4 +19,19 @@ public static class DeviceKeys
         Convert.ToHexStringLower(SHA256.HashData(Encoding.UTF8.GetBytes(key)));
 
     public static string DisplayPrefix(string key) => key[..Math.Min(key.Length, 8)];
+
+    // Placeholder KeyHash for a device that was claimed by pairing code but
+    // hasn't collected its key yet. Unique (KeyHash has a unique index) and
+    // can never equal a real hash, which is 64 hex characters.
+    public static string PendingHash(int pairingId) => $"pending-{pairingId}-{Guid.NewGuid():N}";
+
+    public static bool IsPending(string keyHash) => keyHash.StartsWith("pending-", StringComparison.Ordinal);
+
+    // Private token the device keeps while pairing (same strength as a key)
+    public static string GeneratePairingToken() =>
+        "pt_" + Convert.ToBase64String(RandomNumberGenerator.GetBytes(32))
+            .TrimEnd('=').Replace('+', '-').Replace('/', '_');
+
+    public static string GeneratePairingCode() =>
+        RandomNumberGenerator.GetInt32(0, 1_000_000).ToString("D6");
 }

@@ -17,6 +17,7 @@ public class AppDbContext : DbContext
     public DbSet<WeeklySummary> WeeklySummaries { get; set; }
     public DbSet<Device> Devices { get; set; }
     public DbSet<IntakeRecord> IntakeRecords { get; set; }
+    public DbSet<DevicePairing> DevicePairings { get; set; }
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -48,6 +49,12 @@ public class AppDbContext : DbContext
         // Every device upload looks its key up by hash
         modelBuilder.Entity<Device>()
             .HasIndex(d => d.KeyHash).IsUnique();
+
+        // Pairing: devices poll by token hash, users claim by code
+        modelBuilder.Entity<DevicePairing>()
+            .HasIndex(p => p.TokenHash).IsUnique();
+        modelBuilder.Entity<DevicePairing>()
+            .HasIndex(p => p.Code);
 
         // Food log is listed per user and totalled per day
         modelBuilder.Entity<IntakeRecord>()
