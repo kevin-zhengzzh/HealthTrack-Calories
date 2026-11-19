@@ -265,6 +265,81 @@ public class IntakeControllerTests
         Assert.Single(db.IntakeRecords);
     }
 
+    // ---- Today's list on the device ----
+
+    private static DateOnly Today => DateOnly.FromDateTime(DateTime.UtcNow);
+    private static string TodayStr => Today.ToString("yyyy-MM-dd");
+
+    private static void AddMeals(AppDbContext db)
+    {
+        db.IntakeRecords.AddRange(
+            new IntakeRecord { Id = 10, UserId = Me, FoodName = "rice", Calories = 260, WeightGrams = 200, Date = Today, CreatedAt = DateTime.UtcNow.AddHours(-2) },
+            new IntakeRecord { Id = 11, UserId = Me, FoodName = "apple", Calories = 80, WeightGrams = 150, Date = Today, CreatedAt = DateTime.UtcNow.AddHours(-1) },
+            new IntakeRecord { Id = 12, UserId = Me, FoodName = "cake", Calories = 500, WeightGrams = 120, Date = Today.AddDays(-1) },
+            new IntakeRecord { Id = 13, UserId = SomeoneElse, FoodName = "pizza", Calories = 900, WeightGrams = 300, Date = Today });
+        db.Users.Find(Me)!.DailyIntakeGoal = 1700;
+        db.SaveChanges();
+    }
+
+    [Fact]
+    public async Task DeviceToday_ListsOnlyTodaysMealsOfTheDevicesAccount_OldestFirst()
+    {
+        using var db = NewDb();
+        AddMeals(db);
+
+        var today = Body<DeviceTodayDto>(await NewController(db, new FakeRecognizer()).DeviceTodayList(MyKey, TodayStr, default));
+
+        Assert.Equal(340, today.TodayCalories);
+        Assert.Equal(1700, today.DailyGoal);
+        Assert.Equal([10, 11], today.Meals.Select(m => m.Id));
+        Assert.True(today.Meals[0].CreatedAtUnix < today.Meals[1].CreatedAtUnix);
+    }
+
+    [Fact]
+    public async Task DeviceDelete_RemovesTodaysMeal_AndReturnsTheNewList()
+    {
+        using var db = NewDb();
+        AddMeals(db);
+
+        var today = Body<DeviceTodayDto>(await NewController(db, new FakeRecognizer()).DeviceDelete(10, MyKey, TodayStr, default));
+
+        Assert.Equal(80, today.TodayCalories);
+        Assert.Equal([11], today.Meals.Select(m => m.Id));
+        Assert.Null(await db.IntakeRecords.FindAsync(10));
+    }
+
+    [Theory]
+    [InlineData(12)]  // mine, but from yesterday: history is off limits to a device key
+    [InlineData(13)]  // someone else's
+    [InlineData(99)]  // doesn't exist
+    public async Task DeviceDelete_OnlyReachesTodaysMealsOfTheAccount(int id)
+    {
+        using var db = NewDb();
+        AddMeals(db);
+
+        var result = await NewController(db, new FakeRecognizer()).DeviceDelete(id, MyKey, TodayStr, default);
+
+        Assert.IsType<NotFoundObjectResult>(result);
+        Assert.Equal(4, db.IntakeRecords.Count());
+    }
+
+    [Fact]
+    public async Task DeviceTodayAndDelete_RejectUnknownOrRevokedKeys()
+    {
+        using var db = NewDb();
+        AddMeals(db);
+        var controller = NewController(db, new FakeRecognizer());
+
+        Assert.IsType<UnauthorizedObjectResult>(await controller.DeviceTodayList(null, TodayStr, default));
+        Assert.IsType<UnauthorizedObjectResult>(await controller.DeviceDelete(10, "hk_wrong", TodayStr, default));
+
+        db.Devices.Single().RevokedAt = DateTime.UtcNow;
+        await db.SaveChangesAsync();
+        Assert.IsType<UnauthorizedObjectResult>(await controller.DeviceTodayList(MyKey, TodayStr, default));
+        Assert.IsType<UnauthorizedObjectResult>(await controller.DeviceDelete(10, MyKey, TodayStr, default));
+        Assert.Equal(4, db.IntakeRecords.Count());
+    }
+
     [Fact]
     public void DeviceKeys_AreUniqueAndHashDeterministically()
     {

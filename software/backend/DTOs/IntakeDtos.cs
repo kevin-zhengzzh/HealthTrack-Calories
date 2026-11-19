@@ -37,4 +37,9 @@ public record UpdateIntakeRequest(string FoodName, double WeightGrams, double Ca
 
 // Kept small and flat: it is parsed on a microcontroller and shown on a 320x240 screen
 // DailyGoal: the user's daily intake goal (null = not set), for the ring on the device
+// Today's meals for the list on the device. CreatedAtUnix: seconds since the
+// epoch, so the device can show its own local time.
+public record DeviceMealDto(int Id, string FoodName, int Calories, double WeightGrams, long CreatedAtUnix);
+public record DeviceTodayDto(int TodayCalories, int? DailyGoal, IReadOnlyList<DeviceMealDto> Meals);
+
 public record DeviceUploadResult(bool IsFood, int? Id, string FoodName, double WeightGrams, int Calories, int TodayCalories, string Message, int? DailyGoal = null);

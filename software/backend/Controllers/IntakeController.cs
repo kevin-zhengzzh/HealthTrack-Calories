@@ -161,6 +161,75 @@ public class IntakeController : ControllerBase
             $"{record.FoodName}: {record.Calories} kcal", await DailyGoal(userId, ct)));
     }
 
+    // ---- Today's list on the device (API key, not JWT) ----
+
+    private const int DeviceTodayLimit = 50;
+
+    private async Task<Device?> FindDevice(string? deviceKey, CancellationToken ct)
+    {
+        if (string.IsNullOrWhiteSpace(deviceKey)) return null;
+        var hash = DeviceKeys.Hash(deviceKey.Trim());
+        return await _db.Devices.FirstOrDefaultAsync(d => d.KeyHash == hash && d.RevokedAt == null, ct);
+    }
+
+    private async Task<DeviceTodayDto> DeviceToday(int userId, DateOnly date, CancellationToken ct)
+    {
+        var rows = await _db.IntakeRecords
+            .Where(r => r.UserId == userId && r.Date == date)
+            .OrderBy(r => r.CreatedAt)
+            .Select(r => new { r.Id, r.FoodName, r.Calories, r.WeightGrams, r.CreatedAt })
+            .ToListAsync(ct);
+        var meals = rows
+            .TakeLast(DeviceTodayLimit)
+            .Select(r => new DeviceMealDto(r.Id, r.FoodName, r.Calories, r.WeightGrams,
+                new DateTimeOffset(DateTime.SpecifyKind(r.CreatedAt, DateTimeKind.Utc)).ToUnixTimeSeconds()))
+            .ToList();
+        return new DeviceTodayDto(rows.Sum(r => r.Calories), await DailyGoal(userId, ct), meals);
+    }
+
+    [HttpGet("device/today")]
+    [AllowAnonymous]
+    public async Task<IActionResult> DeviceTodayList(
+        [FromHeader(Name = DeviceKeys.HeaderName)] string? deviceKey,
+        [FromQuery] string? localDate,
+        CancellationToken ct)
+    {
+        var device = await FindDevice(deviceKey, ct);
+        if (device is null)
+            return Unauthorized(new { message = "Unknown or revoked device key." });
+
+        device.LastSeenAt = DateTime.UtcNow;
+        await _db.SaveChangesAsync(ct);
+        return Ok(await DeviceToday(device.UserId, CheckInController.ResolveToday(localDate), ct));
+    }
+
+    // Deleting from the device is limited to today's records: a leaked device
+    // key can't wipe the history. Any of the account's records from today
+    // qualifies, whichever device logged it. Returns the updated list.
+    [HttpDelete("device/{id:int}")]
+    [AllowAnonymous]
+    public async Task<IActionResult> DeviceDelete(
+        int id,
+        [FromHeader(Name = DeviceKeys.HeaderName)] string? deviceKey,
+        [FromQuery] string? localDate,
+        CancellationToken ct)
+    {
+        var device = await FindDevice(deviceKey, ct);
+        if (device is null)
+            return Unauthorized(new { message = "Unknown or revoked device key." });
+
+        var date = CheckInController.ResolveToday(localDate);
+        var record = await _db.IntakeRecords
+            .FirstOrDefaultAsync(r => r.Id == id && r.UserId == device.UserId && r.Date == date, ct);
+        if (record is null)
+            return NotFound(new { message = "No such meal today." });
+
+        _db.IntakeRecords.Remove(record);
+        device.LastSeenAt = DateTime.UtcNow;
+        await _db.SaveChangesAsync(ct);
+        return Ok(await DeviceToday(device.UserId, date, ct));
+    }
+
     private static async Task<byte[]> ReadAllAsync(IFormFile file, CancellationToken ct)
     {
         using var ms = new MemoryStream();

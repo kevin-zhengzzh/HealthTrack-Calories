@@ -179,6 +179,12 @@ Phase 2 的 `msa-backend` / `msa-frontend` 和它的 `neondb` 库**保持不动*
 - **设备上**：主画面右下角一个小圆环，中间 `吃了/目标`（未设目标时显示 `kcal`），超过目标变琥珀色。数据来自上传返回和 `GET /api/device/me?localDate=`（两者都新增 `todayCalories` / `dailyGoal`），**不额外轮询**——网页上的修改要等下一次账号检查（触摸、开机、每 6 小时）才更新；过了本地午夜自动显示 0。
 - **标签含义**（Food Log）：`Check me` = 模型置信度 low；`AI estimate` = medium；high 不显示；`Edited` = 用户改过；`Add details` = 没识别（无名称）。
 
+### D-22 设备上查看并删除今天的记录；不做"识别后确认再记录"（2026-11-20）
+- **决定**：点主画面右下角的摄入圆环 → 全屏 "Today" 页（与 Settings、Wi-Fi 同样的布局，Back 在右上角）：顶部显示 `吃了 / 目标 kcal`、进度条、剩余或超出量，下面是可拖动的当天记录列表（时间、名称、kcal）；点一行出现 Delete，点两次删除。接口 `GET /api/intake/device/today?localDate=`、`DELETE /api/intake/device/{id}?localDate=`（`X-Device-Key`），都返回更新后的列表和总量。
+- **范围**：设备密钥**只能删本账号当天的记录**（哪台设备记的都可以），密钥泄露也删不了历史。
+- **网络**：后台任务，与上传、账号检查互斥（一次只有一个 TLS 连接）；这两个请求本身也能验证密钥（401 → 回到配对界面），所以点圆环和在 Today 页里触摸不再额外触发账号检查。
+- **不做**：用户考虑过"识别后在设备上点 Save/Discard 再记录"，最后决定保持自动记录，记错了在设备的 Today 页或网页上删除/修改即可。
+
 ### D-14 部署工作流暂时只能手动触发（2026-11-18；2026-11-19 已恢复自动部署）
 - **决定**：`deploy.yml` 只保留 `workflow_dispatch`。
 - **原因**：最初镜像名和应用名都指向 Phase 2，自动部署会覆盖线上服务。现在已改为 `healthtrack-*`，并且首次部署已成功。
@@ -207,6 +213,7 @@ Phase 2 的 `msa-backend` / `msa-frontend` 和它的 `neondb` 库**保持不动*
 | 2026-11-19 | 分支 `fix/pairing-polish`：Reset 后不再重新导入 `secrets.h`；配对后设备显示账号名（主画面左上角）；设备自检接口 `/api/device/me`（D-19）；Food Log 改为 5 秒刷新；Wi-Fi 列表滑动 + 展开操作；Reset → Unpair、硬件 ID 去重（D-20）；设置页改为全屏列表（不显示相机画面，Back 在右上角，亮度滑条，行：Light / Wi-Fi / Account+Unpair / Head+Center / Power），Wi-Fi 的 Password 预填已保存的密码 |
 | 2026-11-19 | PR #4 合并，自动部署成功（`8507426`，`/api/device/me` 上线）；分支 `feature/touch-account-check`：触摸触发账号检查 |
 | 2026-11-19 | 每日摄入目标（迁移 `AddDailyIntakeGoal`，共 124 个测试）+ Dashboard 环形图；设备实时画面右上角显示本地时间（NTP，`TIMEZONE`） |
+| 2026-11-20 | 账号检查失败后退避重试（PR #6）；设备 Today 页：查看/删除当天记录（D-22，共 131 个测试） |
 
 ---
 
