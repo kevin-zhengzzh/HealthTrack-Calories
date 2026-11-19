@@ -513,6 +513,24 @@ static void drawAccountTag() {
     drawFit(label, x + 24, y + h / 2, tw, middle_left);
 }
 
+// Local time (NTP, TIMEZONE) in the image's top-right corner, same style as
+// the account tag. Hidden until the clock has been set.
+static void drawClock() {
+    time_t now = time(nullptr);
+    if (now < 1700000000) return;  // not synced yet
+    struct tm t;
+    localtime_r(&now, &t);
+    char buf[6];
+    strftime(buf, sizeof buf, "%H:%M", &t);
+    canvas.setFont(&fonts::Font2);
+    const int h = 22, w = canvas.textWidth(buf) + 16;
+    Rect r = {PREV_W - 6 - w, 6, w, h};
+    fillRoundRectAlpha(r, h / 2, TFT_BLACK, 150);
+    canvas.setTextColor(TFT_WHITE);
+    canvas.setTextDatum(middle_center);
+    canvas.drawString(buf, r.x + w / 2, r.y + h / 2);
+}
+
 static constexpr Rect ACCOUNT_CARD = {14, 34, PREV_W - 28, 116};
 static constexpr Rect BTN_UNPAIR = {ACCOUNT_CARD.x + 10, ACCOUNT_CARD.y + ACCOUNT_CARD.h - 44,
                                     (ACCOUNT_CARD.w - 30) / 2, 34};
@@ -618,6 +636,7 @@ static void drawScreen() {
         canvas.fillRect(0, 0, PREV_W, PREV_H, TFT_BLACK);
     }
     drawAccountTag();
+    drawClock();
 
     bool online = WiFi.status() == WL_CONNECTED;
     switch (state) {

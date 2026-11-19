@@ -10,6 +10,7 @@ export interface User {
   equippedTheme: string
   avatarUrl: string | null
   weeklyCalorieGoal: number
+  dailyIntakeGoal: number | null // kcal per day, set on the Food Log page
 }
 
 export interface CheckIn {

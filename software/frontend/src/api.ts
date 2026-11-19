@@ -89,6 +89,12 @@ export const updateWeeklyGoal = (weeklyCalorieGoal: number) =>
     body: JSON.stringify({ weeklyCalorieGoal }),
   })
 
+export const updateIntakeGoal = (dailyIntakeGoal: number | null) =>
+  request<{ dailyIntakeGoal: number | null }>('/user/intake-goal', {
+    method: 'PUT',
+    body: JSON.stringify({ dailyIntakeGoal }),
+  })
+
 export const updateUsername = (username: string) =>
   request<{ username: string }>('/user/username', {
     method: 'PUT',

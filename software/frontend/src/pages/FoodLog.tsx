@@ -3,16 +3,11 @@ import { claimPairingCode, createDevice, deleteIntake, fetchIntakeImageUrl, getD
 import { useStore } from '../store'
 import { useLockBodyScroll } from '../hooks/useLockBodyScroll'
 import type { CreatedDevice, Device, IntakeRecord } from '../types'
+import { localDateStr, useIntakeGoal } from '../intake'
+import IntakeGoalDialog from '../components/IntakeGoalDialog'
 
 // Devices push meals in the background, so poll while the tab is visible
 const POLL_MS = 5_000
-
-function localDateStr(d = new Date()) {
-  const y = d.getFullYear()
-  const m = String(d.getMonth() + 1).padStart(2, '0')
-  const day = String(d.getDate()).padStart(2, '0')
-  return `${y}-${m}-${day}`
-}
 
 function formatDay(dateStr: string) {
   const today = localDateStr()
@@ -102,6 +97,8 @@ export default function FoodLog() {
   const [newDevice, setNewDevice] = useState<CreatedDevice | null>(null)
   const [confirmRevoke, setConfirmRevoke] = useState<Device | null>(null)
   const [busy, setBusy] = useState(false)
+  const { goal, loaded: goalLoaded, save: saveGoal } = useIntakeGoal()
+  const [editingGoal, setEditingGoal] = useState(false)
 
   useLockBodyScroll(editing !== null || confirmDelete !== null || viewingPhoto !== null || pairing || newDevice !== null || confirmRevoke !== null)
 
@@ -265,17 +262,49 @@ export default function FoodLog() {
     <div className="flex flex-col gap-6">
       <h1 className="text-3xl font-bold text-[var(--text-primary)]">Food Log</h1>
 
-      <section className="bg-[var(--bg-surface)] rounded-2xl shadow p-5 flex items-end justify-between gap-4">
-        <div>
-          <p className="text-sm text-[var(--text-muted)]">Eaten today</p>
-          <p className="text-4xl font-bold text-[var(--text-primary)] tabular-nums">
-            {todayTotal.toLocaleString()} <span className="text-lg font-semibold text-[var(--text-secondary)]">kcal</span>
-          </p>
+      <section className="bg-[var(--bg-surface)] rounded-2xl shadow p-5 flex flex-col gap-3">
+        <div className="flex items-end justify-between gap-4">
+          <div>
+            <p className="text-sm text-[var(--text-muted)]">Eaten today</p>
+            <p className="text-4xl font-bold text-[var(--text-primary)] tabular-nums">
+              {todayTotal.toLocaleString()}
+              {goal !== null && <span className="text-lg font-semibold text-[var(--text-muted)]"> / {goal.toLocaleString()}</span>}
+              {' '}<span className="text-lg font-semibold text-[var(--text-secondary)]">kcal</span>
+            </p>
+          </div>
+          <div className="flex flex-col items-end gap-1">
+            {goalLoaded && (
+              <button
+                onClick={() => setEditingGoal(true)}
+                className="text-sm font-medium hover:underline cursor-pointer"
+                style={{ color: 'var(--primary)' }}
+              >
+                {goal === null ? 'Set daily goal' : 'Edit goal'}
+              </button>
+            )}
+            <p className="text-sm text-[var(--text-muted)]">
+              {todayRecords.length} item{todayRecords.length !== 1 ? 's' : ''}
+            </p>
+          </div>
         </div>
-        <p className="text-sm text-[var(--text-muted)]">
-          {todayRecords.length} item{todayRecords.length !== 1 ? 's' : ''}
-        </p>
+        {goal !== null && (
+          <div>
+            <div className="h-2 rounded-full bg-[var(--bg-inset)] overflow-hidden" role="progressbar" aria-valuemin={0} aria-valuemax={goal} aria-valuenow={todayTotal}>
+              <div
+                className={`h-full rounded-full transition-[width] duration-500 ${todayTotal > goal ? 'bg-amber-500' : ''}`}
+                style={{ width: `${Math.min(100, (todayTotal / goal) * 100)}%`, backgroundColor: todayTotal > goal ? undefined : 'var(--primary)' }}
+              />
+            </div>
+            <p className="text-xs text-[var(--text-muted)] mt-1.5">
+              {todayTotal > goal
+                ? `${(todayTotal - goal).toLocaleString()} kcal over today's goal`
+                : `${(goal - todayTotal).toLocaleString()} kcal left today`}
+            </p>
+          </div>
+        )}
       </section>
+
+      {editingGoal && <IntakeGoalDialog goal={goal} onSave={saveGoal} onClose={() => setEditingGoal(false)} />}
 
       {loading ? (
         <p className="text-[var(--text-muted)]">Loading…</p>

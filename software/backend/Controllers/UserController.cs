@@ -42,6 +42,7 @@ public class UserController : ControllerBase
                 u.EquippedSkinId,
                 u.AvatarUpdatedAt,
                 u.WeeklyCalorieGoal,
+                u.DailyIntakeGoal,
                 HasAvatar = u.AvatarData != null,
                 EquippedTheme = u.EquippedSkinId == null
                     ? "default"
@@ -63,6 +64,7 @@ public class UserController : ControllerBase
             raw.EquippedSkinId,
             raw.EquippedTheme,
             raw.WeeklyCalorieGoal,
+            raw.DailyIntakeGoal,
             AvatarUrl = raw.HasAvatar ? $"/user/avatar/{raw.Id}?v={raw.AvatarUpdatedAt!.Value.Ticks}" : null
         });
     }
@@ -103,6 +105,23 @@ public class UserController : ControllerBase
         await _db.SaveChangesAsync();
 
         return Ok(new { weeklyCalorieGoal = user.WeeklyCalorieGoal });
+    }
+
+    public const int MaxDailyIntakeGoal = 20000;
+
+    [HttpPut("intake-goal")]
+    public async Task<IActionResult> UpdateIntakeGoal(UpdateIntakeGoalRequest req)
+    {
+        if (req.DailyIntakeGoal is < 1 or > MaxDailyIntakeGoal)
+            return BadRequest(new { message = $"Daily intake goal must be between 1 and {MaxDailyIntakeGoal:N0} kcal." });
+
+        var user = await _db.Users.FindAsync(UserId);
+        if (user is null) return NotFound();
+
+        user.DailyIntakeGoal = req.DailyIntakeGoal;
+        await _db.SaveChangesAsync();
+
+        return Ok(new { dailyIntakeGoal = user.DailyIntakeGoal });
     }
 
     private static readonly HashSet<string> AllowedAvatarTypes = new(StringComparer.OrdinalIgnoreCase)

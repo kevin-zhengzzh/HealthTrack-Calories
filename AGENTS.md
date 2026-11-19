@@ -171,6 +171,12 @@ Phase 2 的 `msa-backend` / `msa-frontend` 和它的 `neondb` 库**保持不动*
 - **原因**：换账号是最常见的需求，不应该连 Wi-Fi 一起删；Reset 和 Wi-Fi 混在一起容易误删。
 - **代价**：离线时 Unpair 只能清除本地，网页上会留下一条失效记录，需手动移除（重新配对到同一账号时会被自动替换）。
 
+### D-21 每日摄入目标存为用户上的一个值，自动顺延（2026-11-19）
+- **决定**：`Users.DailyIntakeGoal`（可空，null = 未设置），在 Food Log 的 "Eaten today" 卡片里设置/清除（`PUT /api/user/intake-goal`，1–20000）；**不按天存**——设一次之后每天都沿用，直到再改。Dashboard 新增 "Today's intake" 环形图：整圈 = 目标，每餐一段（按当天顺序配色），超过目标时整圈按总量分配、数字变琥珀色；未设目标时提示去 Food Log 设置。
+- **原因**：用户要求"设定后没改就顺延"；只看今天，不需要历史目标。
+- **代价**：改目标后，过去几天如果以后要显示"当天目标"就无从得知；需要时再改成带生效日期的表。
+- **标签含义**（Food Log）：`Check me` = 模型置信度 low；`AI estimate` = medium；high 不显示；`Edited` = 用户改过；`Add details` = 没识别（无名称）。
+
 ### D-14 部署工作流暂时只能手动触发（2026-11-18；2026-11-19 已恢复自动部署）
 - **决定**：`deploy.yml` 只保留 `workflow_dispatch`。
 - **原因**：最初镜像名和应用名都指向 Phase 2，自动部署会覆盖线上服务。现在已改为 `healthtrack-*`，并且首次部署已成功。
@@ -198,6 +204,7 @@ Phase 2 的 `msa-backend` / `msa-frontend` 和它的 `neondb` 库**保持不动*
 | 2026-11-19 | PR #2 合并，CI 通过后自动部署成功（Deploy #3） |
 | 2026-11-19 | 分支 `fix/pairing-polish`：Reset 后不再重新导入 `secrets.h`；配对后设备显示账号名（主画面左上角）；设备自检接口 `/api/device/me`（D-19）；Food Log 改为 5 秒刷新；Wi-Fi 列表滑动 + 展开操作；Reset → Unpair、硬件 ID 去重（D-20）；设置页改为全屏列表（不显示相机画面，Back 在右上角，亮度滑条，行：Light / Wi-Fi / Account+Unpair / Head+Center / Power），Wi-Fi 的 Password 预填已保存的密码 |
 | 2026-11-19 | PR #4 合并，自动部署成功（`8507426`，`/api/device/me` 上线）；分支 `feature/touch-account-check`：触摸触发账号检查 |
+| 2026-11-19 | 每日摄入目标（迁移 `AddDailyIntakeGoal`，共 124 个测试）+ Dashboard 环形图；设备实时画面右上角显示本地时间（NTP，`TIMEZONE`） |
 
 ---
 
