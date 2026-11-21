@@ -1,6 +1,7 @@
 using System.Security.Claims;
 using backend.Data;
 using backend.DTOs;
+using backend.Models;
 using FluentValidation;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
@@ -42,7 +43,7 @@ public class UserController : ControllerBase
                 u.EquippedSkinId,
                 u.AvatarUpdatedAt,
                 u.WeeklyCalorieGoal,
-                u.DailyIntakeGoal,
+                u.WeeklyIntakeGoal,
                 HasAvatar = u.AvatarData != null,
                 EquippedTheme = u.EquippedSkinId == null
                     ? "default"
@@ -64,7 +65,7 @@ public class UserController : ControllerBase
             raw.EquippedSkinId,
             raw.EquippedTheme,
             raw.WeeklyCalorieGoal,
-            raw.DailyIntakeGoal,
+            raw.WeeklyIntakeGoal,
             AvatarUrl = raw.HasAvatar ? $"/user/avatar/{raw.Id}?v={raw.AvatarUpdatedAt!.Value.Ticks}" : null
         });
     }
@@ -92,37 +93,38 @@ public class UserController : ControllerBase
         return Ok(new { username = user.Username });
     }
 
-    [HttpPut("weekly-goal")]
-    public async Task<IActionResult> UpdateWeeklyGoal(UpdateWeeklyGoalRequest req)
+    // Both goals live on the Plan page. Either figure can be sent; the
+    // weekly value is stored and the daily one derived (Goals).
+    [HttpPut("goals/{kind}")]
+    public async Task<IActionResult> UpdateGoal(string kind, UpdateGoalRequest req)
     {
-        if (req.WeeklyCalorieGoal < 1 || req.WeeklyCalorieGoal > 100000)
-            return BadRequest(new { message = "Weekly calorie goal must be between 1 and 100,000." });
+        var isIntake = kind.Equals("intake", StringComparison.OrdinalIgnoreCase);
+        if (!isIntake && !kind.Equals("burn", StringComparison.OrdinalIgnoreCase))
+            return NotFound(new { message = "Unknown goal. Use 'intake' or 'burn'." });
+        if (req.PerDay is not null && req.PerWeek is not null)
+            return BadRequest(new { message = "Send the daily or the weekly goal, not both." });
+        if (req.PerDay is < 1 or > Goals.MaxPerDay)
+            return BadRequest(new { message = $"Daily goal must be between 1 and {Goals.MaxPerDay:N0} kcal." });
+        if (req.PerWeek is < 1 or > Goals.MaxPerWeek)
+            return BadRequest(new { message = $"Weekly goal must be between 1 and {Goals.MaxPerWeek:N0} kcal." });
+
+        int? perWeek = req.PerWeek ?? req.PerDay * 7;
+        if (perWeek is null && !isIntake)
+            return BadRequest(new { message = "The burn goal can't be cleared." });
 
         var user = await _db.Users.FindAsync(UserId);
         if (user is null) return NotFound();
 
-        user.WeeklyCalorieGoal = req.WeeklyCalorieGoal;
+        if (isIntake) user.WeeklyIntakeGoal = perWeek;
+        else user.WeeklyCalorieGoal = perWeek!.Value;
         await _db.SaveChangesAsync();
 
-        return Ok(new { weeklyCalorieGoal = user.WeeklyCalorieGoal });
+        return Ok(GoalsOf(user));
     }
 
-    public const int MaxDailyIntakeGoal = 20000;
-
-    [HttpPut("intake-goal")]
-    public async Task<IActionResult> UpdateIntakeGoal(UpdateIntakeGoalRequest req)
-    {
-        if (req.DailyIntakeGoal is < 1 or > MaxDailyIntakeGoal)
-            return BadRequest(new { message = $"Daily intake goal must be between 1 and {MaxDailyIntakeGoal:N0} kcal." });
-
-        var user = await _db.Users.FindAsync(UserId);
-        if (user is null) return NotFound();
-
-        user.DailyIntakeGoal = req.DailyIntakeGoal;
-        await _db.SaveChangesAsync();
-
-        return Ok(new { dailyIntakeGoal = user.DailyIntakeGoal });
-    }
+    internal static GoalsDto GoalsOf(User user) => new(
+        new GoalDto(Goals.PerDay(user.WeeklyIntakeGoal), user.WeeklyIntakeGoal),
+        new GoalDto(Goals.PerDay(user.WeeklyCalorieGoal), user.WeeklyCalorieGoal));
 
     private static readonly HashSet<string> AllowedAvatarTypes = new(StringComparer.OrdinalIgnoreCase)
     {

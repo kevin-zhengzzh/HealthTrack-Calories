@@ -1,10 +1,10 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { Link } from 'react-router-dom'
 import { claimPairingCode, createDevice, deleteIntake, fetchIntakeImageUrl, getDevices, getIntakeHistory, revokeDevice, updateIntake } from '../api'
 import { useStore } from '../store'
 import { useLockBodyScroll } from '../hooks/useLockBodyScroll'
 import type { CreatedDevice, Device, IntakeRecord } from '../types'
 import { localDateStr, useIntakeGoal } from '../intake'
-import IntakeGoalDialog from '../components/IntakeGoalDialog'
 
 // Devices push meals in the background, so poll while the tab is visible
 const POLL_MS = 5_000
@@ -99,8 +99,7 @@ export default function FoodLog() {
   const [newDevice, setNewDevice] = useState<CreatedDevice | null>(null)
   const [confirmRevoke, setConfirmRevoke] = useState<Device | null>(null)
   const [busy, setBusy] = useState(false)
-  const { goal, loaded: goalLoaded, save: saveGoal } = useIntakeGoal()
-  const [editingGoal, setEditingGoal] = useState(false)
+  const { goal, loaded: goalLoaded } = useIntakeGoal()
 
   useLockBodyScroll(editing !== null || confirmDelete !== null || viewingPhoto !== null || pairing || newDevice !== null || confirmRevoke !== null)
 
@@ -276,13 +275,9 @@ export default function FoodLog() {
           </div>
           <div className="flex flex-col items-end gap-1">
             {goalLoaded && (
-              <button
-                onClick={() => setEditingGoal(true)}
-                className="text-sm font-medium hover:underline cursor-pointer"
-                style={{ color: 'var(--primary)' }}
-              >
+              <Link to="/plan" className="text-sm font-medium hover:underline" style={{ color: 'var(--primary)' }}>
                 {goal === null ? 'Set daily goal' : 'Edit goal'}
-              </button>
+              </Link>
             )}
             <p className="text-sm text-[var(--text-muted)]">
               {todayRecords.length} item{todayRecords.length !== 1 ? 's' : ''}
@@ -306,7 +301,6 @@ export default function FoodLog() {
         )}
       </section>
 
-      {editingGoal && <IntakeGoalDialog goal={goal} onSave={saveGoal} onClose={() => setEditingGoal(false)} />}
 
       {loading ? (
         <p className="text-[var(--text-muted)]">Loading…</p>

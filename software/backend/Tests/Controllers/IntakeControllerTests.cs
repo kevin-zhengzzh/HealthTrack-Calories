@@ -277,7 +277,7 @@ public class IntakeControllerTests
             new IntakeRecord { Id = 11, UserId = Me, FoodName = "apple", Calories = 80, WeightGrams = 150, Date = Today, CreatedAt = DateTime.UtcNow.AddHours(-1) },
             new IntakeRecord { Id = 12, UserId = Me, FoodName = "cake", Calories = 500, WeightGrams = 120, Date = Today.AddDays(-1) },
             new IntakeRecord { Id = 13, UserId = SomeoneElse, FoodName = "pizza", Calories = 900, WeightGrams = 300, Date = Today });
-        db.Users.Find(Me)!.DailyIntakeGoal = 1700;
+        db.Users.Find(Me)!.WeeklyIntakeGoal = 1700 * 7;
         db.SaveChanges();
     }
 

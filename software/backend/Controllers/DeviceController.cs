@@ -55,9 +55,9 @@ public class DeviceController : ControllerBase
         device.LastSeenAt = DateTime.UtcNow;
         await _db.SaveChangesAsync();
         var user = await _db.Users.Where(u => u.Id == device.UserId)
-            .Select(u => new { u.Username, u.DailyIntakeGoal }).FirstAsync();
+            .Select(u => new { u.Username, u.WeeklyIntakeGoal }).FirstAsync();
         var today = await IntakeController.TodayTotal(_db, device.UserId, CheckInController.ResolveToday(localDate), default);
-        return Ok(new DeviceSelfDto(device.Name, user.Username, today, user.DailyIntakeGoal));
+        return Ok(new DeviceSelfDto(device.Name, user.Username, today, Goals.PerDay(user.WeeklyIntakeGoal)));
     }
 
     // Unpair from the device itself: revokes its own key, so the website no

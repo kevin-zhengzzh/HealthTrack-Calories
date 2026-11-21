@@ -218,7 +218,7 @@ public class DevicePairingControllerTests
             new IntakeRecord { UserId = Me, FoodName = "apple", Calories = 80, Date = today },
             new IntakeRecord { UserId = Me, FoodName = "cake", Calories = 500, Date = today.AddDays(-1) },
             new IntakeRecord { UserId = SomeoneElse, FoodName = "pizza", Calories = 900, Date = today });
-        (await db.Users.FindAsync(Me))!.DailyIntakeGoal = 1700;
+        (await db.Users.FindAsync(Me))!.WeeklyIntakeGoal = 1700 * 7;
         await db.SaveChangesAsync();
 
         var me = Body<DeviceSelfDto>(await new DeviceController(db).Me(key, today.ToString("yyyy-MM-dd")));

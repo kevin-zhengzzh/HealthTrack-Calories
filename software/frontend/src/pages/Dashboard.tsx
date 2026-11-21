@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
-import { checkInToday, getCheckInHistory, getMe, getTodayRewards, getTodayStatus, getWorkoutHistory, updateWeeklyGoal } from '../api'
+import { checkInToday, getCheckInHistory, getMe, getTodayRewards, getTodayStatus, getWorkoutHistory } from '../api'
 import { useStore } from '../store'
 import type { CheckIn, CheckInResult, WorkoutRecord } from '../types'
 import CalorieBarChart from '../components/CalorieBarChart'
@@ -55,17 +55,6 @@ export default function Dashboard() {
     if (workoutRefreshKey === 0) return
     getWorkoutHistory().then(setWorkoutHistory).catch(console.error)
   }, [workoutRefreshKey])
-
-  async function handleGoalSave(newGoal: number) {
-    try {
-      await updateWeeklyGoal(newGoal)
-      if (user) setUser({ ...user, weeklyCalorieGoal: newGoal })
-      pushToast('Weekly goal updated!', 'success')
-    } catch (err: unknown) {
-      pushToast(err instanceof Error ? err.message : 'Failed to update goal')
-      throw err
-    }
-  }
 
   async function handleCheckIn() {
     if (checkedInToday) {
@@ -186,7 +175,7 @@ export default function Dashboard() {
         </div>
 
         <div className="order-4 lg:order-3">
-          {user && <WeeklyGoalDonut records={workoutHistory} goal={user.weeklyCalorieGoal} onSave={handleGoalSave} />}
+          {user && <WeeklyGoalDonut records={workoutHistory} goal={user.weeklyCalorieGoal} />}
         </div>
 
         <div className="order-2 lg:order-4">

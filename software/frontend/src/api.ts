@@ -1,3 +1,4 @@
+import type { GoalKind, Goals } from './types'
 import type { AuthResponse, CaloriesLeaderboardEntry, ChatQuota, ChatStreamEvent, ChatTurn, CheckIn, CheckinTodayLeaderboardEntry, CheckInResult, CreatedDevice, Device, IntakeRecord, LeaderboardEntry, PointTransaction, RewardStatus, Skin, StreakLeaderboardEntry, User, WeeklySummary, WorkoutRecord, WorkoutSubmitResult } from './types'
 import { useStore } from './store'
 import { createSseParser } from './sse'
@@ -83,16 +84,12 @@ export const login = (email: string, password: string) =>
 // User
 export const getMe = () => request<User>('/user/me')
 
-export const updateWeeklyGoal = (weeklyCalorieGoal: number) =>
-  request<{ weeklyCalorieGoal: number }>('/user/weekly-goal', {
+// Set a goal by its daily or weekly figure (the other is derived); null
+// clears it (intake only)
+export const updateGoal = (kind: GoalKind, value: { perDay: number } | { perWeek: number } | null) =>
+  request<Goals>(`/user/goals/${kind}`, {
     method: 'PUT',
-    body: JSON.stringify({ weeklyCalorieGoal }),
-  })
-
-export const updateIntakeGoal = (dailyIntakeGoal: number | null) =>
-  request<{ dailyIntakeGoal: number | null }>('/user/intake-goal', {
-    method: 'PUT',
-    body: JSON.stringify({ dailyIntakeGoal }),
+    body: JSON.stringify(value ?? {}),
   })
 
 export const updateUsername = (username: string) =>

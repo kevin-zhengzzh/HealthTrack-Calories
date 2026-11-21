@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react'
 import { WORKOUT_TYPE_COLORS, WORKOUT_TYPES, type WorkoutRecord } from '../types'
-import { useLockBodyScroll } from '../hooks/useLockBodyScroll'
+import { Link } from 'react-router-dom'
 
 function parseLocalDate(dateStr: string) {
   return new Date(`${dateStr}T00:00:00`)
@@ -26,17 +26,11 @@ const CIRCUMFERENCE = 2 * Math.PI * R
 export default function WeeklyGoalDonut({
   records,
   goal,
-  onSave,
 }: {
   records: WorkoutRecord[]
   goal: number
-  onSave: (newGoal: number) => Promise<void>
 }) {
-  const [editing, setEditing] = useState(false)
-  const [draftGoal, setDraftGoal] = useState(String(goal))
-  const [saving, setSaving] = useState(false)
   const [hoverType, setHoverType] = useState<string | null>(null)
-  useLockBodyScroll(editing)
 
   const weekRecords = useMemo(() => {
     const weekStart = startOfWeek(new Date())
@@ -87,38 +81,20 @@ export default function WeeklyGoalDonut({
 
   const hovered = typeSegments.find((s) => s.type === hoverType) ?? null
 
-  function openEdit() {
-    setDraftGoal(String(goal))
-    setEditing(true)
-  }
-
-  async function handleSave(e: React.FormEvent) {
-    e.preventDefault()
-    const value = Number(draftGoal)
-    if (!draftGoal || !Number.isInteger(value) || value <= 0 || value > 100000) return
-    setSaving(true)
-    try {
-      await onSave(value)
-      setEditing(false)
-    } finally {
-      setSaving(false)
-    }
-  }
-
   return (
     <div className="bg-[var(--bg-surface)] rounded-2xl shadow p-5 h-full">
       <div className="flex items-center justify-between mb-4">
-        <h2 className="font-semibold text-[var(--text-secondary)]">Weekly goal</h2>
-        <button
-          onClick={openEdit}
-          aria-label="Edit weekly calorie goal"
-          title="Edit weekly calorie goal"
-          className="text-[var(--text-muted)] hover:text-[var(--text-secondary)] cursor-pointer p-1"
+        <h2 className="font-semibold text-[var(--text-secondary)]">Weekly burn goal</h2>
+        <Link
+          to="/plan"
+          aria-label="Edit burn goal on the Plan page"
+          title="Edit burn goal (Plan)"
+          className="text-[var(--text-muted)] hover:text-[var(--text-secondary)] p-1"
         >
           <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="w-4 h-4">
             <path d="M17 3a2.85 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z" />
           </svg>
-        </button>
+        </Link>
       </div>
 
       <div className="flex flex-col items-center">
@@ -193,54 +169,6 @@ export default function WeeklyGoalDonut({
           <p className="text-xs text-[var(--text-muted)] mt-3">No workouts recorded this week yet.</p>
         )}
       </div>
-
-      {editing && (
-        <div
-          className="fixed inset-0 z-40 flex items-center justify-center bg-black/30 backdrop-blur-sm p-4"
-          onClick={() => setEditing(false)}
-        >
-          <div
-            className="bg-[var(--bg-surface)] rounded-2xl shadow-xl p-6 w-full max-w-sm"
-            onClick={(e) => e.stopPropagation()}
-          >
-            <h2 className="text-xl font-bold text-[var(--text-primary)] mb-4">Set weekly calorie goal</h2>
-            <form onSubmit={handleSave} className="flex flex-col gap-4">
-              <label className="flex flex-col gap-1 text-sm text-[var(--text-secondary)]">
-                Goal (kcal per week)
-                <input
-                  type="number"
-                  min={1}
-                  max={100000}
-                  step={1}
-                  autoFocus
-                  value={draftGoal}
-                  onChange={(e) => setDraftGoal(e.target.value)}
-                  onKeyDown={(e) => { if (['e', 'E', '+', '-', '.'].includes(e.key)) e.preventDefault() }}
-                  required
-                  className="border border-[var(--border-strong)] rounded-lg px-4 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-green-500"
-                />
-              </label>
-              <div className="flex gap-3 mt-2">
-                <button
-                  type="button"
-                  onClick={() => setEditing(false)}
-                  className="flex-1 border border-[var(--border-strong)] text-[var(--text-secondary)] rounded-lg py-2 font-semibold hover:bg-[var(--bg-inset)] transition cursor-pointer"
-                >
-                  Cancel
-                </button>
-                <button
-                  type="submit"
-                  disabled={saving}
-                  className="flex-1 text-white rounded-lg py-2 font-semibold transition disabled:opacity-60 cursor-pointer"
-                  style={{ backgroundColor: 'var(--primary)' }}
-                >
-                  {saving ? 'Saving…' : 'Save'}
-                </button>
-              </div>
-            </form>
-          </div>
-        </div>
-      )}
     </div>
   )
 }

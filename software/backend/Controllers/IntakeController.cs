@@ -242,8 +242,9 @@ public class IntakeController : ControllerBase
 
     private Task<int> TodayTotal(int userId, DateOnly date, CancellationToken ct) => TodayTotal(_db, userId, date, ct);
 
-    private Task<int?> DailyGoal(int userId, CancellationToken ct) =>
-        _db.Users.Where(u => u.Id == userId).Select(u => u.DailyIntakeGoal).FirstOrDefaultAsync(ct);
+    // The device shows a daily ring: derived from the stored weekly goal
+    private async Task<int?> DailyGoal(int userId, CancellationToken ct) =>
+        Goals.PerDay(await _db.Users.Where(u => u.Id == userId).Select(u => u.WeeklyIntakeGoal).FirstOrDefaultAsync(ct));
 
     // ---- Signed-in user ----
 
