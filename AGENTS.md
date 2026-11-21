@@ -357,6 +357,8 @@ Phase 2 的 `msa-backend` / `msa-frontend` 和它的 `neondb` 库**保持不动*
 - [ ] README 补充智能秤功能说明
 - [ ] 识别失败（或误判为非食物）的照片是否要保留供人工确认
 - [ ] **Statistics 页下面两块挪走**（2026-11-22 用户提出）："Last week" AI 周总结和签到热力图不跟随页面的周/月/年和 Intake/Burned 切换，放在统计页里显得不搭。我的初步想法（未定）：签到热力图 → History → Check-ins 标签顶部（本来就是签到记录，热力图自带月/年切换）；AI 周总结 → 首页底部，或者做成 AI 助手里"上周回顾"的内容，或单独放进侧边栏。做之前和用户确认放哪里。
+- [ ] **右下角 + 按钮改交互**（2026-11-22 用户提出）：鼠标**悬停**就**向左**横向弹出 Add meal / Record workout 两个按钮（现在是点击后向上弹出，会盖住上面的"回到顶部"按钮）。手机上没有悬停，仍然点击展开。
+- [ ] **Add meal 弹窗加设备入口和说明**（2026-11-22 用户提出）：例如 "Have a Stack-chan scale? Weigh food on it and it's logged with a photo automatically — pair it on the Device page →"，说明手动添加和秤自动记录的区别（手动没有照片，热量 = 克数 × kcal/100g）。
 - [ ] **免责说明**（2026-11-22 讨论，用户说"之后做"）。现有：聊天底部 "AI answers can be wrong. Not medical advice."、Plan 预测 "A rough estimate, not medical advice."。计划加（文案英文）：
   1. 新页 `/disclaimer` + 每页底部（含登录/注册）一行 "Not medical advice · Disclaimer"：不是医疗服务；热量/基础消耗/预测/AI 建议都是估算；怀孕或哺乳、未满 18 岁、慢性病、进食障碍史者先咨询专业人士；不适时停止运动
   2. 注册按钮下一行告知并链到说明页（不加勾选框）
