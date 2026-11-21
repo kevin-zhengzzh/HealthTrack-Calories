@@ -7,7 +7,7 @@ import NetBanner from '../components/NetBanner'
 import TodayIntakeCard from '../components/TodayIntakeCard'
 import TodayBurnCard from '../components/TodayBurnCard'
 import { localDateStr } from '../intake'
-import { useLockBodyScroll } from '../hooks/useLockBodyScroll'
+import InfoTip from '../components/InfoTip'
 
 // Devices log meals in the background
 const INTAKE_POLL_MS = 30_000
@@ -39,8 +39,6 @@ export default function Dashboard() {
   const [workoutHistory, setWorkoutHistory] = useState<WorkoutRecord[]>([])
   const [intake, setIntake] = useState<IntakeRecord[] | null>(null)
   const [initialLoading, setInitialLoading] = useState(true)
-  const [showPointsHint, setShowPointsHint] = useState(false)
-  useLockBodyScroll(showPointsHint)
 
   // Re-runs whenever the calendar date changes, not just on mount — a tab
   // left open (or a laptop woken up) past midnight would otherwise keep
@@ -111,23 +109,40 @@ export default function Dashboard() {
 
   return (
     <div className="flex flex-col gap-6">
-      {/* items-start (not center) — keeps the "Dashboard" title's top edge
-          flush with the row, matching the plain <h1> on History/Record
-          History, instead of it centering against the taller stat cards. */}
-      <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-4">
-        <div>
-          <h1 className="text-3xl font-bold text-[var(--text-primary)]">Dashboard</h1>
-          <p className="text-sm text-[var(--text-muted)] mt-1">
-            {now.toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric', year: 'numeric' })}
-            {' · '}
-            {now.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', second: '2-digit' })}
-          </p>
+      {/* Top row: today's check-in (the one thing to do), Points and Streak.
+          No page title — the sidebar already says where you are. */}
+      <div className="grid grid-cols-2 lg:grid-cols-[1fr_auto_auto] gap-4">
+        <div className="col-span-2 lg:col-span-1">
+          <CheckInBar
+            loading={initialLoading}
+            checkedIn={checkedInToday}
+            busy={loading}
+            lastResult={lastResult}
+            onCheckIn={handleCheckIn}
+          />
         </div>
         {user && (
-          <div className="grid grid-cols-2 gap-3">
-            <StatCard label="Points" value={user.points} onInfoClick={() => setShowPointsHint(true)} />
-            <StatCard label="Current streak" value={`${displayStreak} day${displayStreak > 1 ? 's' : ''}`} />
-          </div>
+          <>
+            <StatCard
+              label="Points"
+              value={user.points}
+              tip={
+                <ul className="list-disc pl-4 space-y-1">
+                  <li>10 base points per check-in</li>
+                  <li>+streak × 2 bonus (e.g. 5-day streak = +10)</li>
+                  <li>Recording a workout earns +10 points, once a day</li>
+                  <li>
+                    Spend them in the{' '}
+                    <button onClick={() => setStoreOpen(true)} className="font-semibold underline cursor-pointer text-green-300">
+                      Store
+                    </button>{' '}
+                    to unlock app skins
+                  </li>
+                </ul>
+              }
+            />
+            <StatCard label="Current streak" value={`${displayStreak} day${displayStreak === 1 ? '' : 's'}`} />
+          </>
         )}
       </div>
 
@@ -139,74 +154,21 @@ export default function Dashboard() {
         loading={todayMeals === null || initialLoading}
       />
 
-      {/* Check-in first on phones (it's the one thing to do), last on wide screens */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-        <div className="order-2 lg:order-1">
-          <TodayIntakeCard records={todayMeals} />
-        </div>
-        <div className="order-3 lg:order-2">
-          <TodayBurnCard today={todayWorkouts} weekTotal={weekBurned} loading={initialLoading} />
-        </div>
-        <div className="order-1 lg:order-3 lg:col-span-2">
-          <CheckInBar
-            loading={initialLoading}
-            checkedIn={checkedInToday}
-            busy={loading}
-            lastResult={lastResult}
-            onCheckIn={handleCheckIn}
-          />
-        </div>
+        <TodayIntakeCard records={todayMeals} />
+        <TodayBurnCard today={todayWorkouts} weekTotal={weekBurned} loading={initialLoading} />
       </div>
 
-      {/* Points hint modal */}
-      {showPointsHint && (
-        <div
-          className="fixed inset-0 z-40 flex items-center justify-center bg-black/30 backdrop-blur-sm p-4"
-          onClick={() => setShowPointsHint(false)}
-        >
-          <div
-            className="bg-[var(--bg-surface)] rounded-2xl shadow-xl p-6 w-full max-w-sm"
-            onClick={(e) => e.stopPropagation()}
-          >
-            <h2 className="text-xl font-bold text-[var(--text-primary)] mb-4">How points work</h2>
-            <ul className="text-sm text-[var(--text-muted)] space-y-2 list-disc list-inside">
-              <li>10 base points per check-in</li>
-              <li>+streak × 2 bonus (e.g. 5-day streak = +10 bonus)</li>
-              <li>Recording a workout also earns +10 points — once per day only</li>
-              <li>
-                Spend points in the{' '}
-                <button
-                  onClick={() => { setShowPointsHint(false); setStoreOpen(true) }}
-                  className="font-medium hover:underline cursor-pointer"
-                  style={{ color: 'var(--primary)' }}
-                >
-                  Store
-                </button>{' '}
-                to unlock app skins
-              </li>
-            </ul>
-          </div>
-        </div>
-      )}
     </div>
   )
 }
 
-function StatCard({ label, value, onInfoClick }: { label: string; value: string | number; onInfoClick?: () => void }) {
+function StatCard({ label, value, tip }: { label: string; value: string | number; tip?: React.ReactNode }) {
   return (
-    <div className="rounded-xl p-4" style={{ backgroundColor: 'var(--primary-light)', color: 'var(--primary-text)' }}>
+    <div className="rounded-2xl p-4 lg:min-w-40 flex flex-col justify-center" style={{ backgroundColor: 'var(--primary-light)', color: 'var(--primary-text)' }}>
       <div className="flex items-center gap-1.5">
         <p className="text-xs font-medium uppercase tracking-wide opacity-70">{label}</p>
-        {onInfoClick && (
-          <button
-            onClick={onInfoClick}
-            aria-label={`About ${label}`}
-            className="w-4 h-4 rounded-full flex items-center justify-center text-[10px] font-bold leading-none cursor-pointer opacity-70 hover:opacity-100"
-            style={{ backgroundColor: 'var(--primary)', color: 'white' }}
-          >
-            ?
-          </button>
-        )}
+        {tip && <InfoTip label={`About ${label}`} align="right">{tip}</InfoTip>}
       </div>
       <p className="text-2xl font-bold mt-1">{value}</p>
     </div>
@@ -231,7 +193,7 @@ function CheckInBar({
 }) {
   if (loading) {
     return (
-      <div className="bg-[var(--bg-surface)] rounded-2xl shadow p-5 flex items-center gap-4">
+      <div className="h-full bg-[var(--bg-surface)] rounded-2xl shadow p-5 flex items-center gap-4">
         <div className="w-12 h-12 rounded-full bg-[var(--bg-inset)] animate-pulse" />
         <div className="flex-1 flex flex-col gap-2">
           <div className="h-5 w-48 rounded bg-[var(--bg-inset)] animate-pulse" />
@@ -241,7 +203,7 @@ function CheckInBar({
     )
   }
   return (
-    <div className="bg-[var(--bg-surface)] rounded-2xl shadow p-5 flex flex-col sm:flex-row sm:items-center gap-4">
+    <div className="h-full bg-[var(--bg-surface)] rounded-2xl shadow p-5 flex flex-col sm:flex-row sm:items-center gap-4">
       <div className="flex items-center gap-4 flex-1 min-w-0">
         <div className="w-12 h-12 shrink-0 flex items-center justify-center">
           {checkedIn ? (
