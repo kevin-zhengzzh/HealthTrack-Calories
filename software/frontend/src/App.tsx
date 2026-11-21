@@ -18,11 +18,12 @@ import RecordHistory from './pages/RecordHistory'
 import Rank from './pages/Rank'
 import FoodLog from './pages/FoodLog'
 import Plan from './pages/Plan'
+import Statistics from './pages/Statistics'
 import Landing from './pages/Landing'
 
 // Home / Check-in History / Record History / Food Log share the sidebar and are
 // treated as one "Dashboard" section in the header nav's active state
-const DASHBOARD_SECTION_PATHS = ['/', '/plan', '/history', '/record-history', '/food-log']
+const DASHBOARD_SECTION_PATHS = ['/', '/statistics', '/plan', '/history', '/record-history', '/food-log']
 
 function HomeIcon({ className }: { className?: string }) {
   return (
@@ -185,7 +186,7 @@ function PrivateLayout() {
   // needs the wider Dashboard-style width, and to hug the left edge the
   // same way, instead of the narrow centered list pages
   const isRank = location.pathname === '/rank'
-  const isWide = location.pathname === '/'
+  const isWide = location.pathname === '/' || location.pathname === '/statistics'
   const hugLeft = showSidebar || isRank
 
   return (
@@ -209,6 +210,7 @@ function PrivateLayout() {
               <Route path="/record-history" element={<RecordHistory />} />
               <Route path="/food-log" element={<FoodLog />} />
               <Route path="/plan" element={<Plan />} />
+              <Route path="/statistics" element={<Statistics />} />
               {/* Keyed by location.key so clicking the header's Rank tab while
                   already on /rank remounts the page — resetting its local
                   tab state back to the Daily Check-in default — instead of

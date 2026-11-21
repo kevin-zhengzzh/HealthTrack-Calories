@@ -186,7 +186,7 @@ Phase 2 的 `msa-backend` / `msa-frontend` 和它的 `neondb` 库**保持不动*
 - **网络**：后台任务，与上传、账号检查互斥（一次只有一个 TLS 连接）；这两个请求本身也能验证密钥（401 → 回到配对界面），所以点圆环和在 Today 页里触摸不再额外触发账号检查。
 - **不做**：用户考虑过"识别后在设备上点 Save/Discard 再记录"，最后决定保持自动记录，记错了在设备的 Today 页或网页上删除/修改即可。
 
-### D-23 净热量只做展示，目标仍然比较"吃了多少"（2026-11-21）
+### D-23 净热量只做展示，目标仍然比较"吃了多少"（2026-11-21；位置和计算条件见 D-25）
 - **决定**：Dashboard 的 "Today's intake" 卡片加一行 Eaten / Burned / Net（摄入 − 当天运动消耗），运动数据用 Dashboard 已经加载的 workout 记录（按用户本地日期），不新增接口。圆环和"还剩多少"仍按**摄入**对比每日目标。
 - **原因**：每日目标是"摄入目标"（D-21），如果改成按净热量算，运动后目标会"变大"，含义就混了；净热量作为参考数字更直观。
 
@@ -196,6 +196,13 @@ Phase 2 的 `msa-backend` / `msa-frontend` 和它的 `neondb` 库**保持不动*
 - **迁移** `WeeklyIntakeGoal`：把 `DailyIntakeGoal` 改名并 ×7（回滚时 ÷7），在本地 PostgreSQL 上验证过升级和回滚。
 - **不变**：设备、上传返回、`/device/me` 里的 `dailyGoal` 由后端换算后返回，固件不用改；`WeeklyCalorieGoal` 的名字保留（AI 助手的工具和周总结都在用），含义就是"每周消耗目标"。
 - **颜色**：摄入统一用蓝色 `#2a78d6`（`INTAKE_COLOR`），消耗用主题色。
+
+### D-25 Dashboard 只看"今天"，趋势移到 Statistics 页（2026-11-21）
+- **决定**：首页只保留四块：顶部 Points / Streak（不变）→ **净热量横幅**（Eaten − Burned = Net）→ **今日摄入**和**今日消耗**两张对称的圆环卡片 → 一条横向的**签到卡片**。AI 周总结、运动柱状图、每周目标圆环、签到热力图移到新的 **Statistics** 页（侧边栏：Dashboard / Statistics / Plan / Check-in History / Record History / Food Log），第 3 步再重做那一页。
+- **净热量**：只有当天**既有饮食记录又有运动记录**时才计算，否则 Net 显示 "—" 并提示补录哪一边——防止忘记记录运动时净热量虚高。代价：真正的休息日不会显示净热量（暂不加"休息日"标记）。
+- **两张卡片共用 `TodayCard`**：整圈 = 每日目标（摄入目标 / 每周消耗目标 ÷ 7，D-24），每条记录一段（同一颜色、段间留缝；摄入蓝色、消耗主题色），超过目标整圈变琥珀色；右边是"还差 / 超出多少"和当天列表（最新在上）。消耗卡片底部有本周（周一起）进度条，右上角 "+ Record workout" 打开和悬浮按钮同一个弹窗（开关状态移到 store 的 `recordModalOpen`）。
+- **手机顺序**：净热量 → 签到 → 摄入 → 消耗（签到是唯一要"做"的事）；宽屏两张卡片并排、签到在下面。
+- **数据**：摄入在 Dashboard 里每 30 秒刷新（设备在后台上传），运动沿用 `workoutRefreshKey`。
 
 ### D-14 部署工作流暂时只能手动触发（2026-11-18；2026-11-19 已恢复自动部署）
 - **决定**：`deploy.yml` 只保留 `workflow_dispatch`。
@@ -230,6 +237,7 @@ Phase 2 的 `msa-backend` / `msa-frontend` 和它的 `neondb` 库**保持不动*
 | 2026-11-20 | Today 页行展开（同 Wi-Fi 列表）、最新在上、打开时每 10 秒刷新、3 分钟无操作自动关闭 —— PR #7 合并部署（`d290b1c`） |
 | 2026-11-20 | 真机实拍真实食物（番茄、炒肉、炒饭、烤串、火龙果）已能识别入库，kcal/100g 合理 |
 | 2026-11-21 | Dashboard 净热量（D-23）；串口日志过滤脚本 `tools/serial_log.py` |
+| 2026-11-21 | 第 2 步：Dashboard 只看今天（D-25）：净热量横幅、今日摄入/消耗对称圆环卡片、横向签到卡片；临时 Statistics 页放原来的图表；本地 Playwright 截图检查了桌面和手机布局 |
 | 2026-11-21 | 统计/首页改版三步计划的第 1 步：Plan 页 + 目标按周存储（D-24，迁移 `WeeklyIntakeGoal`，共 141 个测试）。第 2 步首页改版、第 3 步统计页（Intake/Burned 切换，自然周/月/年可往回翻，日均只算有记录的天，排行榜） |
 
 ---
@@ -259,6 +267,8 @@ Phase 2 的 `msa-backend` / `msa-frontend` 和它的 `neondb` 库**保持不动*
 - **`cam_hal: EV-EOF-OVF` / `EV-VSYNC-OVF` 刷屏关不掉**：预编译相机驱动在中断里用"早期日志"打印（每秒好几条），`esp_log_level_set` 管不到；试过 XCLK 6MHz（更多）、`CAMERA_GRAB_WHEN_EMPTY`（更多），都没用，已还原。只是预览丢帧，拍照不受影响；读日志时过滤即可。
 - **开机那次账号检查失败 → 摄入圆环不出现**：圆环要有数据才画；原来失败后要等 6 小时才重试（已改为退避重试，D-19）。
 - **固件里函数/变量的定义顺序**：`main.cpp` 是单文件，新代码用到后面才定义的东西（`inRect`、`todayBusy`、`localDate`）会编译失败；把定义挪到前面或加前置声明。
+- **页面宽度按路由写死在 `App.tsx`**：只有 `isWide` 的路由用 `lg:max-w-5xl`，其他是 `lg:max-w-2xl`。新页面放宽屏内容时要加进 `isWide`（Statistics 一开始只有 672px 宽）。
+- **看前端效果**：本机有 Playwright + Edge（`p.chromium.launch(channel='msedge')`）。本地后端 `:5000` + `npx vite`，注册临时账号、`localStorage` 写 `token/userId/username` 后截图；用完删掉临时账号和它的记录（`IntakeRecords`、`WorkoutRecords`、`Users`）。
 - **EF Core 的 `ExecuteDeleteAsync`** 内存测试库不支持；需要在测试里跑到的代码改用加载后 `RemoveRange`。
 
 ---

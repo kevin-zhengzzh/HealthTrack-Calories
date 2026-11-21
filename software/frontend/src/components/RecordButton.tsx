@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { getTodayRewards, recordWorkout } from '../api'
 import { useStore } from '../store'
 import { WORKOUT_TYPES } from '../types'
@@ -10,15 +10,23 @@ import { useLockBodyScroll } from '../hooks/useLockBodyScroll'
 // workout list (fetched independently) knows to refetch.
 export default function RecordButton() {
   const { pushToast, setRewardStatus, bumpWorkoutRefresh } = useStore()
-  const [showRecordModal, setShowRecordModal] = useState(false)
+  // Open state lives in the store so other places (the dashboard's burn
+  // card) can open the same modal
+  const showRecordModal = useStore((s) => s.recordModalOpen)
+  const setShowRecordModal = useStore((s) => s.setRecordModalOpen)
   const [workoutType, setWorkoutType] = useState<string>(WORKOUT_TYPES[0])
   const [calories, setCalories] = useState('')
   const [recording, setRecording] = useState(false)
   useLockBodyScroll(showRecordModal)
 
-  function openRecordModal() {
+  // Fresh form every time it opens, whoever opened it
+  useEffect(() => {
+    if (!showRecordModal) return
     setWorkoutType(WORKOUT_TYPES[0])
     setCalories('')
+  }, [showRecordModal])
+
+  function openRecordModal() {
     setShowRecordModal(true)
   }
 
