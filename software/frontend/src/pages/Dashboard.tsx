@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
-import { checkInToday, getCheckInHistory, getMe, getTodayRewards, getTodayStatus, getWorkoutHistory, updateWeeklyGoal } from '../api'
+import { checkInToday, getCheckInHistory, getMe, getTodayRewards, getTodayStatus, getWorkoutHistory } from '../api'
 import { useStore } from '../store'
 import type { CheckIn, CheckInResult, WorkoutRecord } from '../types'
 import CalorieBarChart from '../components/CalorieBarChart'
@@ -8,6 +8,7 @@ import WeeklyGoalDonut from '../components/WeeklyGoalDonut'
 import CheckInHeatmap from '../components/CheckInHeatmap'
 import WeeklySummaryCard from '../components/WeeklySummaryCard'
 import TodayIntakeCard from '../components/TodayIntakeCard'
+import { localDateStr } from '../intake'
 import { useLockBodyScroll } from '../hooks/useLockBodyScroll'
 
 // Ticks every second so the header clock stays live while the page is open.
@@ -55,17 +56,6 @@ export default function Dashboard() {
     getWorkoutHistory().then(setWorkoutHistory).catch(console.error)
   }, [workoutRefreshKey])
 
-  async function handleGoalSave(newGoal: number) {
-    try {
-      await updateWeeklyGoal(newGoal)
-      if (user) setUser({ ...user, weeklyCalorieGoal: newGoal })
-      pushToast('Weekly goal updated!', 'success')
-    } catch (err: unknown) {
-      pushToast(err instanceof Error ? err.message : 'Failed to update goal')
-      throw err
-    }
-  }
-
   async function handleCheckIn() {
     if (checkedInToday) {
       pushToast('Already checked in today. Come back tomorrow!')
@@ -91,6 +81,10 @@ export default function Dashboard() {
   // rather than a stale streak that looks "already earned" for today.
   const displayStreak = checkedInToday ? (user?.streak ?? 0) : 0
 
+  // kcal burned in today's workouts (workout dates are the user's local day)
+  const today = localDateStr(now)
+  const burnedToday = workoutHistory.filter((r) => r.date === today).reduce((s, r) => s + r.calories, 0)
+
   return (
     <div className="flex flex-col gap-6">
       {/* items-start (not center) — keeps the "Dashboard" title's top edge
@@ -115,7 +109,7 @@ export default function Dashboard() {
 
       <WeeklySummaryCard />
 
-      <TodayIntakeCard />
+      <TodayIntakeCard burned={initialLoading ? null : burnedToday} />
 
       {/*
         A true 2x2 grid (not two independent columns) so row 2 — the weekly
@@ -181,7 +175,7 @@ export default function Dashboard() {
         </div>
 
         <div className="order-4 lg:order-3">
-          {user && <WeeklyGoalDonut records={workoutHistory} goal={user.weeklyCalorieGoal} onSave={handleGoalSave} />}
+          {user && <WeeklyGoalDonut records={workoutHistory} goal={user.weeklyCalorieGoal} />}
         </div>
 
         <div className="order-2 lg:order-4">

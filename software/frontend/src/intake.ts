@@ -1,6 +1,4 @@
-import { useCallback } from 'react'
-import { updateIntakeGoal } from './api'
-import { useStore } from './store'
+import { useGoals } from './goals'
 
 // yyyy-MM-dd of the browser's local day; intake records carry the same format
 export function localDateStr(d = new Date()) {
@@ -10,26 +8,9 @@ export function localDateStr(d = new Date()) {
   return `${y}-${m}-${day}`
 }
 
-export const MAX_INTAKE_GOAL = 20000
-
-// The daily intake goal lives on the user, so it carries over to later days
-// until it's changed. Returns the current goal (null = not set) and a saver.
+// Daily intake goal (null = not set), derived from the weekly one. Set on the
+// Plan page.
 export function useIntakeGoal() {
-  const user = useStore((s) => s.user)
-  const setUser = useStore((s) => s.setUser)
-  const pushToast = useStore((s) => s.pushToast)
-
-  const save = useCallback(async (goal: number | null) => {
-    try {
-      const res = await updateIntakeGoal(goal)
-      const current = useStore.getState().user
-      if (current) setUser({ ...current, dailyIntakeGoal: res.dailyIntakeGoal })
-      pushToast(goal === null ? 'Daily goal cleared.' : 'Daily goal updated!', 'success')
-    } catch (err: unknown) {
-      pushToast(err instanceof Error ? err.message : 'Failed to update goal')
-      throw err
-    }
-  }, [setUser, pushToast])
-
-  return { goal: user?.dailyIntakeGoal ?? null, loaded: user !== null, save }
+  const { intake, loaded } = useGoals()
+  return { goal: intake?.perDay ?? null, loaded }
 }

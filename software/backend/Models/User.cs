@@ -18,12 +18,13 @@ public class User
     // a workout on the same day can't re-earn the bonus.
     public DateOnly? LastWorkoutBonusDate { get; set; }
 
-    // User-configurable target for the weekly calorie chart
+    // Goals, set on the Plan page and stored per week (see Goals for why).
+    // Burn: kcal burned in workouts per week (the original "weekly goal").
     public int WeeklyCalorieGoal { get; set; } = 2000;
 
-    // Daily food intake target (kcal), set on the Food Log page. Null = not set.
-    // One value, not one per day: it carries over to later days until changed.
-    public int? DailyIntakeGoal { get; set; }
+    // Intake: kcal eaten per week; null = not set. One value, not one per
+    // day: it carries over until changed.
+    public int? WeeklyIntakeGoal { get; set; }
 
     // Equipped skin (null = default green theme)
     public int? EquippedSkinId { get; set; }

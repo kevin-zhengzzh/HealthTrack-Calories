@@ -9,8 +9,16 @@ export interface User {
   equippedSkinId: number | null
   equippedTheme: string
   avatarUrl: string | null
-  weeklyCalorieGoal: number
-  dailyIntakeGoal: number | null // kcal per day, set on the Food Log page
+  // Goals, set on the Plan page and stored per week (daily = weekly / 7)
+  weeklyCalorieGoal: number // burn: kcal burned in workouts per week
+  weeklyIntakeGoal: number | null // intake: kcal eaten per week, null = not set
+}
+
+export type GoalKind = 'intake' | 'burn'
+
+export interface Goals {
+  intake: { perDay: number | null; perWeek: number | null }
+  burn: { perDay: number | null; perWeek: number | null }
 }
 
 export interface CheckIn {

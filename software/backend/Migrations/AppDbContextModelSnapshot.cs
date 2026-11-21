@@ -376,9 +376,6 @@ namespace backend.Migrations
                     b.Property<DateTime>("CreatedAt")
                         .HasColumnType("timestamp with time zone");
 
-                    b.Property<int?>("DailyIntakeGoal")
-                        .HasColumnType("integer");
-
                     b.Property<string>("Email")
                         .IsRequired()
                         .HasColumnType("text");
@@ -407,6 +404,9 @@ namespace backend.Migrations
                         .HasColumnType("text");
 
                     b.Property<int>("WeeklyCalorieGoal")
+                        .HasColumnType("integer");
+
+                    b.Property<int?>("WeeklyIntakeGoal")
                         .HasColumnType("integer");
 
                     b.HasKey("Id");

@@ -1,10 +1,10 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { Link } from 'react-router-dom'
 import { claimPairingCode, createDevice, deleteIntake, fetchIntakeImageUrl, getDevices, getIntakeHistory, revokeDevice, updateIntake } from '../api'
 import { useStore } from '../store'
 import { useLockBodyScroll } from '../hooks/useLockBodyScroll'
 import type { CreatedDevice, Device, IntakeRecord } from '../types'
 import { localDateStr, useIntakeGoal } from '../intake'
-import IntakeGoalDialog from '../components/IntakeGoalDialog'
 
 // Devices push meals in the background, so poll while the tab is visible
 const POLL_MS = 5_000
@@ -14,11 +14,13 @@ function formatDay(dateStr: string) {
   const yesterday = localDateStr(new Date(Date.now() - 86_400_000))
   if (dateStr === today) return 'Today'
   if (dateStr === yesterday) return 'Yesterday'
-  return new Date(`${dateStr}T00:00:00`).toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' })
+  return new Date(`${dateStr}T00:00:00`).toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' })
 }
 
+// The site is in English: fixed locale, not the browser's (a Chinese browser
+// showed "11月19日周四"). 24-hour times, like the clock on the device.
 function formatTime(iso: string) {
-  return new Date(iso).toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' })
+  return new Date(iso).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit', hour12: false })
 }
 
 // Uploads stored as photo + weight only have no name or calories yet
@@ -97,8 +99,7 @@ export default function FoodLog() {
   const [newDevice, setNewDevice] = useState<CreatedDevice | null>(null)
   const [confirmRevoke, setConfirmRevoke] = useState<Device | null>(null)
   const [busy, setBusy] = useState(false)
-  const { goal, loaded: goalLoaded, save: saveGoal } = useIntakeGoal()
-  const [editingGoal, setEditingGoal] = useState(false)
+  const { goal, loaded: goalLoaded } = useIntakeGoal()
 
   useLockBodyScroll(editing !== null || confirmDelete !== null || viewingPhoto !== null || pairing || newDevice !== null || confirmRevoke !== null)
 
@@ -274,13 +275,9 @@ export default function FoodLog() {
           </div>
           <div className="flex flex-col items-end gap-1">
             {goalLoaded && (
-              <button
-                onClick={() => setEditingGoal(true)}
-                className="text-sm font-medium hover:underline cursor-pointer"
-                style={{ color: 'var(--primary)' }}
-              >
+              <Link to="/plan" className="text-sm font-medium hover:underline" style={{ color: 'var(--primary)' }}>
                 {goal === null ? 'Set daily goal' : 'Edit goal'}
-              </button>
+              </Link>
             )}
             <p className="text-sm text-[var(--text-muted)]">
               {todayRecords.length} item{todayRecords.length !== 1 ? 's' : ''}
@@ -304,7 +301,6 @@ export default function FoodLog() {
         )}
       </section>
 
-      {editingGoal && <IntakeGoalDialog goal={goal} onSave={saveGoal} onClose={() => setEditingGoal(false)} />}
 
       {loading ? (
         <p className="text-[var(--text-muted)]">Loading…</p>
@@ -386,7 +382,7 @@ export default function FoodLog() {
                   <p className="text-xs text-[var(--text-muted)]">
                     {d.awaitingDevice
                       ? 'Waiting for the device to connect…'
-                      : <><code>{d.keyPrefix}…</code> · {d.lastSeenAt ? `last seen ${new Date(d.lastSeenAt).toLocaleString()}` : 'never used'}</>}
+                      : <><code>{d.keyPrefix}…</code> · {d.lastSeenAt ? `last seen ${new Date(d.lastSeenAt).toLocaleString('en-US', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit', hour12: false })}` : 'never used'}</>}
                   </p>
                 </div>
                 <button type="button" onClick={() => setConfirmRevoke(d)}
