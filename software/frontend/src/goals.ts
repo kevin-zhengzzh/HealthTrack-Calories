@@ -24,7 +24,7 @@ const goalOf = (perWeek: number | null | undefined): Goal | null =>
   perWeek == null ? null : { perDay: perDay(perWeek), perWeek }
 
 // Current goals from the signed-in user, and a saver for the Plan page.
-// intake is null until one is set; burn always has a value.
+// Either is null when not set (new accounts start with a burn goal).
 export function useGoals() {
   const user = useStore((s) => s.user)
   const setUser = useStore((s) => s.setUser)
@@ -32,7 +32,7 @@ export function useGoals() {
   const save = useCallback(async (kind: GoalKind, value: { perDay: number } | { perWeek: number } | null) => {
     const res: Goals = await updateGoal(kind, value)
     const current = useStore.getState().user
-    if (current) setUser({ ...current, weeklyIntakeGoal: res.intake.perWeek, weeklyCalorieGoal: res.burn.perWeek ?? current.weeklyCalorieGoal })
+    if (current) setUser({ ...current, weeklyIntakeGoal: res.intake.perWeek, weeklyCalorieGoal: res.burn.perWeek })
   }, [setUser])
 
   return {

@@ -86,18 +86,77 @@ public class UserGoalsTests
         Assert.Null(goals.Intake.PerWeek);
     }
 
-    [Fact]
-    public async Task IntakeGoal_CanBeCleared_ButTheBurnGoalCant()
+    [Theory]
+    [InlineData("intake")]
+    [InlineData("burn")]
+    public async Task EitherGoal_CanBeCleared(string kind)
     {
         using var db = NewDb();
         var controller = NewController(db);
-        await controller.UpdateGoal("intake", new UpdateGoalRequest(1700, null));
+        await controller.UpdateGoal(kind, new UpdateGoalRequest(1700, null));
 
-        Assert.Equal(new GoalDto(null, null), Goals(await controller.UpdateGoal("intake", new UpdateGoalRequest(null, null))).Intake);
-        Assert.Null((await Me_(db)).WeeklyIntakeGoal);
+        var goals = Goals(await controller.UpdateGoal(kind, new UpdateGoalRequest(null, null)));
 
-        Assert.IsType<BadRequestObjectResult>(await controller.UpdateGoal("burn", new UpdateGoalRequest(null, null)));
-        Assert.Equal(2000, (await Me_(db)).WeeklyCalorieGoal);
+        Assert.Equal(new GoalDto(null, null), kind == "intake" ? goals.Intake : goals.Burn);
+        var user = await Me_(db);
+        Assert.Null(kind == "intake" ? user.WeeklyIntakeGoal : user.WeeklyCalorieGoal);
+    }
+
+    // ---- Body profile ----
+
+    private static readonly int ThisYear = DateTime.UtcNow.Year;
+
+    [Fact]
+    public async Task Profile_IsSavedAndRounded()
+    {
+        using var db = NewDb();
+
+        var result = await NewController(db).UpdateProfile(new ProfileDto("female", ThisYear - 30, 165.04, 60.26, "light"));
+
+        Assert.Equal(new ProfileDto("female", ThisYear - 30, 165.0, 60.3, "light"),
+            Assert.IsType<ProfileDto>(Assert.IsType<OkObjectResult>(result).Value));
+        var user = await Me_(db);
+        Assert.Equal(60.3, user.WeightKg);
+        Assert.Equal("light", user.ActivityLevel);
+    }
+
+    [Fact]
+    public async Task Profile_FieldsAreOptional_AndCanBeCleared()
+    {
+        using var db = NewDb();
+        var controller = NewController(db);
+        await controller.UpdateProfile(new ProfileDto("male", ThisYear - 40, 180, 80, "active"));
+
+        Assert.IsType<OkObjectResult>(await controller.UpdateProfile(new ProfileDto(null, null, null, 78, null)));
+
+        var user = await Me_(db);
+        Assert.Null(user.Sex);
+        Assert.Null(user.HeightCm);
+        Assert.Equal(78, user.WeightKg);
+    }
+
+    public static TheoryData<ProfileDto> BadProfiles => new()
+    {
+        new ProfileDto("other", null, null, null, null),
+        new ProfileDto(null, ThisYear - 5, null, null, null),       // too young
+        new ProfileDto(null, ThisYear - 130, null, null, null),     // too old
+        new ProfileDto(null, null, 90, null, null),
+        new ProfileDto(null, null, 260, null, null),
+        new ProfileDto(null, null, null, 20, null),
+        new ProfileDto(null, null, null, double.NaN, null),
+        new ProfileDto(null, null, null, null, "couch"),
+    };
+
+    [Theory]
+    [MemberData(nameof(BadProfiles))]
+    public async Task InvalidProfiles_AreRejected_AndNothingChanges(ProfileDto profile)
+    {
+        using var db = NewDb();
+
+        Assert.IsType<BadRequestObjectResult>(await NewController(db).UpdateProfile(profile));
+        var user = await Me_(db);
+        Assert.Null(user.Sex);
+        Assert.Null(user.WeightKg);
     }
 
     [Theory]

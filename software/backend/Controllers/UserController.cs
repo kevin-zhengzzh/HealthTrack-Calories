@@ -44,6 +44,11 @@ public class UserController : ControllerBase
                 u.AvatarUpdatedAt,
                 u.WeeklyCalorieGoal,
                 u.WeeklyIntakeGoal,
+                u.Sex,
+                u.BirthYear,
+                u.HeightCm,
+                u.WeightKg,
+                u.ActivityLevel,
                 HasAvatar = u.AvatarData != null,
                 EquippedTheme = u.EquippedSkinId == null
                     ? "default"
@@ -66,6 +71,7 @@ public class UserController : ControllerBase
             raw.EquippedTheme,
             raw.WeeklyCalorieGoal,
             raw.WeeklyIntakeGoal,
+            Profile = new ProfileDto(raw.Sex, raw.BirthYear, raw.HeightCm, raw.WeightKg, raw.ActivityLevel),
             AvatarUrl = raw.HasAvatar ? $"/user/avatar/{raw.Id}?v={raw.AvatarUpdatedAt!.Value.Ticks}" : null
         });
     }
@@ -108,18 +114,45 @@ public class UserController : ControllerBase
         if (req.PerWeek is < 1 or > Goals.MaxPerWeek)
             return BadRequest(new { message = $"Weekly goal must be between 1 and {Goals.MaxPerWeek:N0} kcal." });
 
-        int? perWeek = req.PerWeek ?? req.PerDay * 7;
-        if (perWeek is null && !isIntake)
-            return BadRequest(new { message = "The burn goal can't be cleared." });
+        int? perWeek = req.PerWeek ?? req.PerDay * 7;  // null = clear
 
         var user = await _db.Users.FindAsync(UserId);
         if (user is null) return NotFound();
 
         if (isIntake) user.WeeklyIntakeGoal = perWeek;
-        else user.WeeklyCalorieGoal = perWeek!.Value;
+        else user.WeeklyCalorieGoal = perWeek;
         await _db.SaveChangesAsync();
 
         return Ok(GoalsOf(user));
+    }
+
+    // Optional body profile for the Plan page's one-year projection
+    [HttpPut("profile")]
+    public async Task<IActionResult> UpdateProfile(ProfileDto req)
+    {
+        var thisYear = DateTime.UtcNow.Year;
+        if (req.Sex is not null && !BodyProfile.Sexes.Contains(req.Sex))
+            return BadRequest(new { message = "Sex must be 'male' or 'female'." });
+        if (req.BirthYear is { } y && (thisYear - y < BodyProfile.MinAge || thisYear - y > BodyProfile.MaxAge))
+            return BadRequest(new { message = $"Age must be between {BodyProfile.MinAge} and {BodyProfile.MaxAge}." });
+        if (req.HeightCm is { } h && (!double.IsFinite(h) || h < BodyProfile.MinHeightCm || h > BodyProfile.MaxHeightCm))
+            return BadRequest(new { message = $"Height must be between {BodyProfile.MinHeightCm} and {BodyProfile.MaxHeightCm} cm." });
+        if (req.WeightKg is { } w && (!double.IsFinite(w) || w < BodyProfile.MinWeightKg || w > BodyProfile.MaxWeightKg))
+            return BadRequest(new { message = $"Weight must be between {BodyProfile.MinWeightKg} and {BodyProfile.MaxWeightKg} kg." });
+        if (req.ActivityLevel is not null && !BodyProfile.ActivityLevels.Contains(req.ActivityLevel))
+            return BadRequest(new { message = "Unknown activity level." });
+
+        var user = await _db.Users.FindAsync(UserId);
+        if (user is null) return NotFound();
+
+        user.Sex = req.Sex;
+        user.BirthYear = req.BirthYear;
+        user.HeightCm = req.HeightCm is { } hh ? Math.Round(hh, 1) : null;
+        user.WeightKg = req.WeightKg is { } ww ? Math.Round(ww, 1) : null;
+        user.ActivityLevel = req.ActivityLevel;
+        await _db.SaveChangesAsync();
+
+        return Ok(new ProfileDto(user.Sex, user.BirthYear, user.HeightCm, user.WeightKg, user.ActivityLevel));
     }
 
     internal static GoalsDto GoalsOf(User user) => new(

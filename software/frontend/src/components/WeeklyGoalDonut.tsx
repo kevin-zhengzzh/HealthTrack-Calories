@@ -28,7 +28,7 @@ export default function WeeklyGoalDonut({
   goal,
 }: {
   records: WorkoutRecord[]
-  goal: number
+  goal: number | null // null = no burn goal set (Plan page)
 }) {
   const [hoverType, setHoverType] = useState<string | null>(null)
 
@@ -39,7 +39,7 @@ export default function WeeklyGoalDonut({
 
   const weekTotal = weekRecords.reduce((sum, r) => sum + r.calories, 0)
 
-  const percent = goal > 0 ? Math.round((weekTotal / goal) * 100) : 0
+  const percent = goal ? Math.round((weekTotal / goal) * 100) : 0
   const ringPercent = Math.min(100, percent)
 
   // Ring sweeps in from empty on first load; CSS transition on the segment
@@ -125,10 +125,10 @@ export default function WeeklyGoalDonut({
               ))}
             </g>
             <text x={SIZE / 2} y={SIZE / 2 - 6} textAnchor="middle" fontSize={30} fontWeight={700} className="fill-[var(--text-primary)]">
-              {percent}%
+              {goal ? `${percent}%` : "—"}
             </text>
             <text x={SIZE / 2} y={SIZE / 2 + 18} textAnchor="middle" fontSize={11} className="fill-[var(--text-muted)]">
-              of weekly goal
+              {goal ? 'of weekly goal' : 'no goal set'}
             </text>
           </svg>
 
@@ -148,7 +148,8 @@ export default function WeeklyGoalDonut({
         </div>
 
         <p className="text-sm text-[var(--text-muted)] mt-2">
-          <span className="font-semibold text-[var(--text-secondary)]">{weekTotal.toLocaleString()}</span> / {goal.toLocaleString()} kcal this week
+          <span className="font-semibold text-[var(--text-secondary)]">{weekTotal.toLocaleString()}</span>
+          {goal ? <> / {goal.toLocaleString()} kcal this week</> : <> kcal this week · <Link to="/plan" className="font-medium hover:underline" style={{ color: 'var(--primary)' }}>set a goal</Link></>}
         </p>
 
         {typeSegments.length > 0 ? (

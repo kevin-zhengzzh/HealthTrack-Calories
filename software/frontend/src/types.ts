@@ -10,8 +10,20 @@ export interface User {
   equippedTheme: string
   avatarUrl: string | null
   // Goals, set on the Plan page and stored per week (daily = weekly / 7)
-  weeklyCalorieGoal: number // burn: kcal burned in workouts per week
+  weeklyCalorieGoal: number | null // burn: kcal burned in workouts per week, null = not set
   weeklyIntakeGoal: number | null // intake: kcal eaten per week, null = not set
+  profile: Profile
+}
+
+export type ActivityLevel = 'sedentary' | 'light' | 'active' | 'very_active'
+
+// Optional body profile (Plan page), for the one-year projection
+export interface Profile {
+  sex: 'male' | 'female' | null
+  birthYear: number | null
+  heightCm: number | null
+  weightKg: number | null
+  activityLevel: ActivityLevel | null
 }
 
 export type GoalKind = 'intake' | 'burn'

@@ -186,7 +186,7 @@ function PrivateLayout() {
   // needs the wider Dashboard-style width, and to hug the left edge the
   // same way, instead of the narrow centered list pages
   const isRank = location.pathname === '/rank'
-  const isWide = location.pathname === '/' || location.pathname === '/statistics'
+  const isWide = ['/', '/statistics', '/plan'].includes(location.pathname)
   const hugLeft = showSidebar || isRank
 
   return (

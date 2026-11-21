@@ -204,6 +204,14 @@ Phase 2 的 `msa-backend` / `msa-frontend` 和它的 `neondb` 库**保持不动*
 - **手机顺序**：净热量 → 签到 → 摄入 → 消耗（签到是唯一要"做"的事）；宽屏两张卡片并排、签到在下面。
 - **数据**：摄入在 Dashboard 里每 30 秒刷新（设备在后台上传），运动沿用 `workoutRefreshKey`。
 
+### D-26 消耗目标也可清除；Plan 页加身体数据和一年预测（2026-11-21）
+- **左右一致**：两张目标卡片结构完全相同，都有 Clear。`Users.WeeklyCalorieGoal` 改为可空（新账号仍默认 2,000/周）；AI 工具 `get_weekly_goal_progress` 在未设目标时返回 `goal: null` 和说明（不再当作"用户不存在"），周总结的 `goalPercent` 为 null；每周目标圆环显示 "—" 和"set a goal"链接，首页消耗卡片显示"No burn goal yet"。
+- **身体数据**（可选，`PUT /api/user/profile`）：性别、出生年份、身高、体重、日常活动量，存在 Users 上；`/user/me` 返回 `profile`。限制见 `Models/BodyProfile.cs`。
+- **维持热量** = Mifflin-St Jeor BMR × 日常活动系数（1.2 / 1.3 / 1.45 / 1.6）。系数描述的是**不含已记录运动**的日常活动——运动通过消耗目标单独加上，避免重复计算。
+- **一年预测**（前端 `src/projection.ts`，有单元测试）：每天 余量 = 摄入目标 −（当日体重下的维持热量 + 每日消耗目标），7,700 kcal ≈ 1 kg，按新体重每天重新算维持热量（曲线会逐渐变平）。显示 12 个月曲线、一年后体重、"吃 − 维持 − 运动 = 每天余量"的分解；第一个月每周减重超过体重 1%、摄入低于 1,200（女）/1,500（男）、终点 BMI < 18.5 时给出琥珀色提醒；注明是粗略估计、非医疗建议。缺目标或身体数据时列出还缺什么。
+- **问号提示** `InfoTip`：悬停/聚焦显示解释，用在首页 Net、Plan 各卡片标题、日常活动量、维持热量。
+- **迁移** `BurnGoalOptionalAndBodyProfile`；回滚时先把空的消耗目标填回 2,000。
+
 ### D-14 部署工作流暂时只能手动触发（2026-11-18；2026-11-19 已恢复自动部署）
 - **决定**：`deploy.yml` 只保留 `workflow_dispatch`。
 - **原因**：最初镜像名和应用名都指向 Phase 2，自动部署会覆盖线上服务。现在已改为 `healthtrack-*`，并且首次部署已成功。
@@ -237,6 +245,7 @@ Phase 2 的 `msa-backend` / `msa-frontend` 和它的 `neondb` 库**保持不动*
 | 2026-11-20 | Today 页行展开（同 Wi-Fi 列表）、最新在上、打开时每 10 秒刷新、3 分钟无操作自动关闭 —— PR #7 合并部署（`d290b1c`） |
 | 2026-11-20 | 真机实拍真实食物（番茄、炒肉、炒饭、烤串、火龙果）已能识别入库，kcal/100g 合理 |
 | 2026-11-21 | Dashboard 净热量（D-23）；串口日志过滤脚本 `tools/serial_log.py` |
+| 2026-11-21 | Net 问号提示；Plan 页左右一致（消耗目标可清除）、身体数据、一年体重预测（D-26，迁移 `BurnGoalOptionalAndBodyProfile`，后端 153 / 前端 47 个测试） |
 | 2026-11-21 | 第 2 步：Dashboard 只看今天（D-25）：净热量横幅、今日摄入/消耗对称圆环卡片、横向签到卡片；临时 Statistics 页放原来的图表；本地 Playwright 截图检查了桌面和手机布局 |
 | 2026-11-21 | 统计/首页改版三步计划的第 1 步：Plan 页 + 目标按周存储（D-24，迁移 `WeeklyIntakeGoal`，共 141 个测试）。第 2 步首页改版、第 3 步统计页（Intake/Burned 切换，自然周/月/年可往回翻，日均只算有记录的天，排行榜） |
 
@@ -269,6 +278,8 @@ Phase 2 的 `msa-backend` / `msa-frontend` 和它的 `neondb` 库**保持不动*
 - **固件里函数/变量的定义顺序**：`main.cpp` 是单文件，新代码用到后面才定义的东西（`inRect`、`todayBusy`、`localDate`）会编译失败；把定义挪到前面或加前置声明。
 - **页面宽度按路由写死在 `App.tsx`**：只有 `isWide` 的路由用 `lg:max-w-5xl`，其他是 `lg:max-w-2xl`。新页面放宽屏内容时要加进 `isWide`（Statistics 一开始只有 672px 宽）。
 - **看前端效果**：本机有 Playwright + Edge（`p.chromium.launch(channel='msedge')`）。本地后端 `:5000` + `npx vite`，注册临时账号、`localStorage` 写 `token/userId/username` 后截图；用完删掉临时账号和它的记录（`IntakeRecords`、`WorkoutRecords`、`Users`）。
+- **PowerShell 5.1 会吞掉传给原生程序的双引号**：`psql -c 'DELETE FROM "Users" …'` 到了 psql 那里变成 `DELETE FROM Users`（表名被转小写，报"关系不存在"）。带引号的 SQL 用 Bash 跑。
+- **停掉后台的 `npx vite` 任务不一定会结束 node 子进程**：下次 `--strictPort` 会报端口被占用（旧进程还在用磁盘上的新代码提供页面）。用 `Get-NetTCPConnection -LocalPort 5173` 找到 PID，确认命令行是本仓库的 vite 后再停。
 - **EF Core 的 `ExecuteDeleteAsync`** 内存测试库不支持；需要在测试里跑到的代码改用加载后 `RemoveRange`。
 
 ---

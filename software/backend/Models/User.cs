@@ -20,11 +20,20 @@ public class User
 
     // Goals, set on the Plan page and stored per week (see Goals for why).
     // Burn: kcal burned in workouts per week (the original "weekly goal").
-    public int WeeklyCalorieGoal { get; set; } = 2000;
+    // New accounts start at 2,000; null = cleared on the Plan page.
+    public int? WeeklyCalorieGoal { get; set; } = 2000;
 
     // Intake: kcal eaten per week; null = not set. One value, not one per
     // day: it carries over until changed.
     public int? WeeklyIntakeGoal { get; set; }
+
+    // Body profile (Plan page), all optional: used to estimate maintenance
+    // calories for the one-year projection. See Models/BodyProfile.cs.
+    public string? Sex { get; set; }            // "male" | "female"
+    public int? BirthYear { get; set; }
+    public double? HeightCm { get; set; }
+    public double? WeightKg { get; set; }
+    public string? ActivityLevel { get; set; }  // BodyProfile.ActivityLevels
 
     // Equipped skin (null = default green theme)
     public int? EquippedSkinId { get; set; }

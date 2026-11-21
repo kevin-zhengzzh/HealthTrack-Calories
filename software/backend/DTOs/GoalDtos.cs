@@ -6,3 +6,6 @@ public record UpdateGoalRequest(int? PerDay, int? PerWeek);
 
 public record GoalDto(int? PerDay, int? PerWeek);
 public record GoalsDto(GoalDto Intake, GoalDto Burn);
+
+// PUT /api/user/profile: the whole profile at once; any field may be null
+public record ProfileDto(string? Sex, int? BirthYear, double? HeightCm, double? WeightKg, string? ActivityLevel);

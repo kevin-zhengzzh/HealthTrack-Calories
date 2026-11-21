@@ -76,6 +76,22 @@ public class ChatToolExecutorTests
     }
 
     [Fact]
+    public async Task WeeklyGoalProgress_SaysSo_WhenTheGoalWasCleared()
+    {
+        var db = NewDb();
+        db.Users.Find(Me)!.WeeklyCalorieGoal = null;
+        db.WorkoutRecords.Add(Workout(Me, Today, 700, "Gym"));
+        await db.SaveChangesAsync();
+        var (executor, _) = NewExecutor(db);
+
+        var result = await Run(executor, ChatToolExecutor.WeeklyGoalProgress);
+
+        Assert.Equal(System.Text.Json.JsonValueKind.Null, result.GetProperty("goal").ValueKind);
+        Assert.Equal(700, result.GetProperty("caloriesSoFar").GetInt32());
+        Assert.False(result.TryGetProperty("error", out _));
+    }
+
+    [Fact]
     public async Task WeeklyGoalProgress_UsesOnlyTheCallingUsersGoalAndWorkouts()
     {
         var db = NewDb();

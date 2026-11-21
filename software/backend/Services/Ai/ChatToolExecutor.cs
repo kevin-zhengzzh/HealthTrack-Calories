@@ -150,13 +150,25 @@ public class ChatToolExecutor
     // T-3
     private async Task<object> GetWeeklyGoalProgress(int userId, DateOnly today, CancellationToken ct)
     {
-        var goal = await _db.Users.Where(u => u.Id == userId).Select(u => (int?)u.WeeklyCalorieGoal).FirstOrDefaultAsync(ct);
-        if (goal is null) return new { error = "User not found." };
+        var user = await _db.Users.Where(u => u.Id == userId).Select(u => new { u.WeeklyCalorieGoal }).FirstOrDefaultAsync(ct);
+        if (user is null) return new { error = "User not found." };
+        var goal = user.WeeklyCalorieGoal;
 
         var weekStart = StartOfWeek(today);
         var caloriesSoFar = await _db.WorkoutRecords
             .Where(w => w.UserId == userId && w.Date >= weekStart && w.Date <= today)
             .SumAsync(w => w.Calories, ct);
+
+        // The burn goal can be cleared on the Plan page
+        if (goal is null)
+            return new
+            {
+                weekStart,
+                goal = (int?)null,
+                note = "The user has no weekly burn goal set (it can be set on the Plan page).",
+                caloriesSoFar,
+                daysLeftInWeek = 6 - DaysSinceMonday(today),
+            };
 
         return new
         {
