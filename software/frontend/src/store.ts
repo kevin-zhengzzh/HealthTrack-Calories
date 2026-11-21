@@ -51,6 +51,11 @@ interface AppState {
   workoutRefreshKey: number
   bumpWorkoutRefresh: () => void
 
+  // The Record workout modal: opened by the floating button or by the
+  // dashboard's "Today's burn" card
+  recordModalOpen: boolean
+  setRecordModalOpen: (open: boolean) => void
+
   // Bumped whenever rewards are claimed from the header's Daily Tasks menu
   // (visible on every page, including Rank) — since points change, the
   // leaderboard watches this to know when to refetch
@@ -146,6 +151,9 @@ export const useStore = create<AppState>((set) => ({
 
   workoutRefreshKey: 0,
   bumpWorkoutRefresh: () => set((s) => ({ workoutRefreshKey: s.workoutRefreshKey + 1 })),
+
+  recordModalOpen: false,
+  setRecordModalOpen: (recordModalOpen) => set({ recordModalOpen }),
 
   leaderboardRefreshKey: 0,
   bumpLeaderboardRefresh: () => set((s) => ({ leaderboardRefreshKey: s.leaderboardRefreshKey + 1 })),

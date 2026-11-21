@@ -3,6 +3,7 @@ import BackToTopButton from './BackToTopButton'
 
 const links = [
   { to: '/', label: 'Dashboard', end: true },
+  { to: '/statistics', label: 'Statistics', end: false },
   { to: '/plan', label: 'Plan', end: false },
   { to: '/history', label: 'Check-in History', end: false },
   { to: '/record-history', label: 'Record History', end: false },

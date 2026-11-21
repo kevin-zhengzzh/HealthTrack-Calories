@@ -1,15 +1,23 @@
-import { useEffect, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 import { Link } from 'react-router-dom'
-import { checkInToday, getCheckInHistory, getMe, getTodayRewards, getTodayStatus, getWorkoutHistory } from '../api'
+import { checkInToday, getIntakeHistory, getMe, getTodayRewards, getTodayStatus, getWorkoutHistory } from '../api'
 import { useStore } from '../store'
-import type { CheckIn, CheckInResult, WorkoutRecord } from '../types'
-import CalorieBarChart from '../components/CalorieBarChart'
-import WeeklyGoalDonut from '../components/WeeklyGoalDonut'
-import CheckInHeatmap from '../components/CheckInHeatmap'
-import WeeklySummaryCard from '../components/WeeklySummaryCard'
+import type { CheckInResult, IntakeRecord, WorkoutRecord } from '../types'
+import NetBanner from '../components/NetBanner'
 import TodayIntakeCard from '../components/TodayIntakeCard'
+import TodayBurnCard from '../components/TodayBurnCard'
 import { localDateStr } from '../intake'
 import { useLockBodyScroll } from '../hooks/useLockBodyScroll'
+
+// Devices log meals in the background
+const INTAKE_POLL_MS = 30_000
+
+// Monday of the week containing d, as yyyy-MM-dd
+function mondayOf(d: Date) {
+  const m = new Date(d.getFullYear(), d.getMonth(), d.getDate())
+  m.setDate(m.getDate() - ((m.getDay() + 6) % 7))
+  return localDateStr(m)
+}
 
 // Ticks every second so the header clock stays live while the page is open.
 function useNow() {
@@ -21,21 +29,23 @@ function useNow() {
   return now
 }
 
+// Today at a glance: net calories, today's intake and burn against the
+// daily goals, and the check-in. Trends live on the Statistics page.
 export default function Dashboard() {
   const { user, setUser, checkedInToday, setCheckedInToday, setRewardStatus, pushToast, setStoreOpen, workoutRefreshKey } = useStore()
   const now = useNow()
   const [loading, setLoading] = useState(false)
   const [lastResult, setLastResult] = useState<CheckInResult | null>(null)
   const [workoutHistory, setWorkoutHistory] = useState<WorkoutRecord[]>([])
-  const [checkInHistory, setCheckInHistory] = useState<CheckIn[]>([])
+  const [intake, setIntake] = useState<IntakeRecord[] | null>(null)
   const [initialLoading, setInitialLoading] = useState(true)
   const [showPointsHint, setShowPointsHint] = useState(false)
   useLockBodyScroll(showPointsHint)
 
   // Re-runs whenever the calendar date changes, not just on mount — a tab
   // left open (or a laptop woken up) past midnight would otherwise keep
-  // showing yesterday's checkedInToday/history state indefinitely, since
-  // this page never remounts on its own.
+  // showing yesterday's state indefinitely, since this page never remounts
+  // on its own.
   const todayStr = now.toDateString()
   useEffect(() => {
     Promise.allSettled([
@@ -45,16 +55,26 @@ export default function Dashboard() {
         setLastResult(r.result ?? null)
       }),
       getWorkoutHistory().then(setWorkoutHistory),
-      getCheckInHistory().then(setCheckInHistory),
     ]).then(() => setInitialLoading(false))
   }, [todayStr])
 
-  // A workout recorded from the shared floating Record button (which can be
-  // opened from any page) doesn't touch this page's local state directly.
+  // A workout recorded from the shared Record modal (which can be opened
+  // from any page) doesn't touch this page's local state directly.
   useEffect(() => {
     if (workoutRefreshKey === 0) return
     getWorkoutHistory().then(setWorkoutHistory).catch(console.error)
   }, [workoutRefreshKey])
+
+  const loadIntake = useCallback(() => getIntakeHistory().then(setIntake).catch(console.error), [])
+  useEffect(() => {
+    loadIntake()
+    const timer = setInterval(() => { if (document.visibilityState === 'visible') loadIntake() }, INTAKE_POLL_MS)
+    window.addEventListener('focus', loadIntake)
+    return () => {
+      clearInterval(timer)
+      window.removeEventListener('focus', loadIntake)
+    }
+  }, [loadIntake, todayStr])
 
   async function handleCheckIn() {
     if (checkedInToday) {
@@ -66,7 +86,6 @@ export default function Dashboard() {
       const result = await checkInToday()
       setLastResult(result)
       setCheckedInToday(true)
-      setCheckInHistory((h) => [{ id: result.id, date: result.date, note: null, createdAt: result.createdAt }, ...h])
       pushToast(`+${result.pointsEarned} pts ready to claim in Daily Tasks · ${result.streak}-day streak`, 'success')
       getTodayRewards().then(setRewardStatus).catch(console.error)
     } catch (err: unknown) {
@@ -81,9 +100,14 @@ export default function Dashboard() {
   // rather than a stale streak that looks "already earned" for today.
   const displayStreak = checkedInToday ? (user?.streak ?? 0) : 0
 
-  // kcal burned in today's workouts (workout dates are the user's local day)
+  // Today's meals and workouts (both dated by the user's local day)
   const today = localDateStr(now)
-  const burnedToday = workoutHistory.filter((r) => r.date === today).reduce((s, r) => s + r.calories, 0)
+  const weekStart = mondayOf(now)
+  const todayMeals = useMemo(() => intake?.filter((r) => r.date === today) ?? null, [intake, today])
+  const todayWorkouts = useMemo(() => workoutHistory.filter((r) => r.date === today), [workoutHistory, today])
+  const weekBurned = workoutHistory.filter((r) => r.date >= weekStart && r.date <= today).reduce((s, r) => s + r.calories, 0)
+  const eaten = (todayMeals ?? []).reduce((s, r) => s + r.calories, 0)
+  const burned = todayWorkouts.reduce((s, r) => s + r.calories, 0)
 
   return (
     <div className="flex flex-col gap-6">
@@ -107,79 +131,30 @@ export default function Dashboard() {
         )}
       </div>
 
-      <WeeklySummaryCard />
+      <NetBanner
+        eaten={eaten}
+        burned={burned}
+        meals={todayMeals?.length ?? 0}
+        workouts={todayWorkouts.length}
+        loading={todayMeals === null || initialLoading}
+      />
 
-      <TodayIntakeCard burned={initialLoading ? null : burnedToday} />
-
-      {/*
-        A true 2x2 grid (not two independent columns) so row 2 — the weekly
-        goal donut and the check-in frequency chart — share one row track
-        and stretch to the same height, keeping their bottoms aligned. Order
-        values control both the mobile stacking sequence (check-in card and
-        heatmap first) and the desktop 2-column placement.
-      */}
+      {/* Check-in first on phones (it's the one thing to do), last on wide screens */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-        <div className="order-3 lg:order-1">
-          <CalorieBarChart records={workoutHistory} />
+        <div className="order-2 lg:order-1">
+          <TodayIntakeCard records={todayMeals} />
         </div>
-
-        <div className="order-1 lg:order-2">
-          {initialLoading ? (
-            <div className="w-full h-full bg-[var(--bg-surface)] rounded-2xl shadow p-8 flex flex-col items-center justify-center gap-4">
-              <div className="w-16 h-16 rounded-full bg-[var(--bg-inset)] animate-pulse" />
-              <div className="h-6 w-56 rounded bg-[var(--bg-inset)] animate-pulse" />
-              <div className="h-4 w-72 rounded bg-[var(--bg-inset)] animate-pulse" />
-            </div>
-          ) : (
-            // Big check-in button — same icon/title/subtitle/button structure
-            // in both states so the card never resizes; the button stays
-            // visible after checking in, just disabled and greyed out
-            // instead of disappearing.
-            <div className="w-full h-full bg-[var(--bg-surface)] rounded-2xl shadow p-8 flex flex-col items-center justify-center gap-4">
-              <div className="w-[60px] h-[60px] flex items-center justify-center">
-                {checkedInToday ? (
-                  <div
-                    className="w-[60px] h-[60px] rounded-full flex items-center justify-center text-white"
-                    style={{ backgroundColor: 'var(--primary)' }}
-                  >
-                    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round" className="w-8 h-8">
-                      <path d="M20 6 9 17l-5-5" />
-                    </svg>
-                  </div>
-                ) : (
-                  <span className="text-6xl leading-none">🏃</span>
-                )}
-              </div>
-              <p className="text-xl font-semibold text-[var(--text-secondary)]">
-                {checkedInToday ? 'You checked in today!' : 'Did you exercise today?'}
-              </p>
-              <p className="text-[var(--text-muted)] text-sm text-center">
-                {checkedInToday
-                  ? lastResult
-                    ? <>You've surpassed <Link to="/rank" className="font-bold hover:underline" style={{ color: 'var(--primary)' }}>{lastResult.percentSurpassed}%</Link> of users today. Come back tomorrow!</>
-                    : 'Come back tomorrow to keep your streak going.'
-                  : 'Hit the button to log your workout and earn points.'}
-              </p>
-              <button
-                onClick={handleCheckIn}
-                disabled={loading}
-                className="mt-2 text-white font-bold text-lg px-10 py-4 rounded-2xl shadow-lg transition-transform active:scale-95 disabled:opacity-60 cursor-pointer"
-                style={{ backgroundColor: checkedInToday ? 'var(--border-strong)' : 'var(--primary)' }}
-                onMouseEnter={(e) => { if (!checkedInToday) e.currentTarget.style.backgroundColor = 'var(--primary-hover)' }}
-                onMouseLeave={(e) => { if (!checkedInToday) e.currentTarget.style.backgroundColor = 'var(--primary)' }}
-              >
-                {checkedInToday ? '✓ Checked In' : loading ? 'Checking in…' : '✓ Check In'}
-              </button>
-            </div>
-          )}
+        <div className="order-3 lg:order-2">
+          <TodayBurnCard today={todayWorkouts} weekTotal={weekBurned} loading={initialLoading} />
         </div>
-
-        <div className="order-4 lg:order-3">
-          {user && <WeeklyGoalDonut records={workoutHistory} goal={user.weeklyCalorieGoal} />}
-        </div>
-
-        <div className="order-2 lg:order-4">
-          <CheckInHeatmap checkIns={checkInHistory} records={workoutHistory} />
+        <div className="order-1 lg:order-3 lg:col-span-2">
+          <CheckInBar
+            loading={initialLoading}
+            checkedIn={checkedInToday}
+            busy={loading}
+            lastResult={lastResult}
+            onCheckIn={handleCheckIn}
+          />
         </div>
       </div>
 
@@ -234,6 +209,74 @@ function StatCard({ label, value, onInfoClick }: { label: string; value: string 
         )}
       </div>
       <p className="text-2xl font-bold mt-1">{value}</p>
+    </div>
+  )
+}
+
+// Today's check-in as one row: status on the left, the button on the right.
+// Same structure in both states so it never changes size; after checking in
+// the button stays, greyed out.
+function CheckInBar({
+  loading,
+  checkedIn,
+  busy,
+  lastResult,
+  onCheckIn,
+}: {
+  loading: boolean
+  checkedIn: boolean
+  busy: boolean
+  lastResult: CheckInResult | null
+  onCheckIn: () => void
+}) {
+  if (loading) {
+    return (
+      <div className="bg-[var(--bg-surface)] rounded-2xl shadow p-5 flex items-center gap-4">
+        <div className="w-12 h-12 rounded-full bg-[var(--bg-inset)] animate-pulse" />
+        <div className="flex-1 flex flex-col gap-2">
+          <div className="h-5 w-48 rounded bg-[var(--bg-inset)] animate-pulse" />
+          <div className="h-4 w-72 max-w-full rounded bg-[var(--bg-inset)] animate-pulse" />
+        </div>
+      </div>
+    )
+  }
+  return (
+    <div className="bg-[var(--bg-surface)] rounded-2xl shadow p-5 flex flex-col sm:flex-row sm:items-center gap-4">
+      <div className="flex items-center gap-4 flex-1 min-w-0">
+        <div className="w-12 h-12 shrink-0 flex items-center justify-center">
+          {checkedIn ? (
+            <div className="w-12 h-12 rounded-full flex items-center justify-center text-white" style={{ backgroundColor: 'var(--primary)' }}>
+              <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round" className="w-6 h-6">
+                <path d="M20 6 9 17l-5-5" />
+              </svg>
+            </div>
+          ) : (
+            <span className="text-4xl leading-none">🏃</span>
+          )}
+        </div>
+        <div className="min-w-0">
+          <p className="text-lg font-semibold text-[var(--text-secondary)]">
+            {checkedIn ? 'You checked in today!' : 'Did you exercise today?'}
+          </p>
+          <p className="text-sm text-[var(--text-muted)]">
+            {checkedIn
+              ? lastResult
+                ? <>You've surpassed <Link to="/rank" className="font-bold hover:underline" style={{ color: 'var(--primary)' }}>{lastResult.percentSurpassed}%</Link> of users today. Come back tomorrow!</>
+                : 'Come back tomorrow to keep your streak going.'
+              : 'Check in to keep your streak and earn points.'}
+          </p>
+        </div>
+      </div>
+      <button
+        onClick={onCheckIn}
+        disabled={busy}
+        className="shrink-0 text-white font-bold px-8 py-3 rounded-xl shadow transition-transform active:scale-95 disabled:opacity-60 cursor-pointer"
+        style={{ backgroundColor: checkedIn ? 'var(--border-strong)' : 'var(--primary)' }}
+        onMouseEnter={(e) => { if (!checkedIn) e.currentTarget.style.backgroundColor = 'var(--primary-hover)' }}
+        onMouseLeave={(e) => { if (!checkedIn) e.currentTarget.style.backgroundColor = 'var(--primary)' }}
+      >
+        {checkedIn ? '✓ Checked In' : busy ? 'Checking in…' : '✓ Check In'}
+      </button>
     </div>
   )
 }

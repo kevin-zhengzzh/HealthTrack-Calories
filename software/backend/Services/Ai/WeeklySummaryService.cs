@@ -116,7 +116,7 @@ public class WeeklySummaryService
             activeDays = week.Select(w => w.Date).Distinct().Count(),
             totalCalories,
             weeklyCalorieGoal = goal,
-            goalPercent = goal > 0 ? (int)Math.Round(totalCalories * 100.0 / goal) : 0,
+            goalPercent = goal > 0 ? (int)Math.Round(totalCalories * 100.0 / goal.Value) : (int?)null,  // null: no goal set
             previousWeekCalories = records.Where(w => w.Date < weekStart).Sum(w => w.Calories),
             checkInDays,
             byType = week

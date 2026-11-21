@@ -1,4 +1,4 @@
-import type { GoalKind, Goals } from './types'
+import type { GoalKind, Goals, Profile } from './types'
 import type { AuthResponse, CaloriesLeaderboardEntry, ChatQuota, ChatStreamEvent, ChatTurn, CheckIn, CheckinTodayLeaderboardEntry, CheckInResult, CreatedDevice, Device, IntakeRecord, LeaderboardEntry, PointTransaction, RewardStatus, Skin, StreakLeaderboardEntry, User, WeeklySummary, WorkoutRecord, WorkoutSubmitResult } from './types'
 import { useStore } from './store'
 import { createSseParser } from './sse'
@@ -90,6 +90,12 @@ export const updateGoal = (kind: GoalKind, value: { perDay: number } | { perWeek
   request<Goals>(`/user/goals/${kind}`, {
     method: 'PUT',
     body: JSON.stringify(value ?? {}),
+  })
+
+export const updateProfile = (profile: Profile) =>
+  request<Profile>('/user/profile', {
+    method: 'PUT',
+    body: JSON.stringify(profile),
   })
 
 export const updateUsername = (username: string) =>
