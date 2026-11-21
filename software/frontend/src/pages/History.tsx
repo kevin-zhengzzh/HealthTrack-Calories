@@ -1,104 +1,47 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { getCheckInHistory } from '../api'
-import Pagination from '../components/Pagination'
 import type { CheckIn } from '../types'
+import { EmptyCard, GroupCard, LoadingCard, Row, ShowMore, Tile } from '../components/HistoryParts'
+import { formatDay, formatMonth, formatTime, groupBy, GROUPS_PER_PAGE } from '../historyFormat'
 
-const PAGE_SIZE_OPTIONS = [5, 10, 20]
-
-// Bare "YYYY-MM-DD" strings parse as UTC midnight in JS; constructing from
-// the parts instead keeps the calendar date stable regardless of local timezone.
-function parseLocalDate(dateStr: string) {
-  const [y, m, d] = dateStr.split('-').map(Number)
-  return new Date(y, m - 1, d)
-}
-
+// The Check-ins tab of History. One check-in a day, so the cards are per
+// month (a card per day would hold a single row); rows look like the Food Log.
 export default function History() {
   const [history, setHistory] = useState<CheckIn[]>([])
-  const [initialLoading, setInitialLoading] = useState(true)
-  const [page, setPage] = useState(1)
-  const [pageSize, setPageSize] = useState(10)
+  const [loading, setLoading] = useState(true)
+  const [shownMonths, setShownMonths] = useState(GROUPS_PER_PAGE)
 
   useEffect(() => {
-    getCheckInHistory().then(setHistory).catch(console.error).finally(() => setInitialLoading(false))
+    getCheckInHistory().then(setHistory).catch(console.error).finally(() => setLoading(false))
   }, [])
 
-  function changePageSize(size: number) {
-    setPageSize(size)
-    setPage(1)
-  }
-
-  const totalPages = Math.max(1, Math.ceil(history.length / pageSize))
-  const currentPage = Math.min(page, totalPages)
-  const pageItems = history.slice((currentPage - 1) * pageSize, currentPage * pageSize)
-
-  // Group the current page's check-ins by month for display
-  const grouped = pageItems.reduce<Record<string, CheckIn[]>>((acc, c) => {
-    const month = c.date.slice(0, 7) // "2026-07"
-    if (!acc[month]) acc[month] = []
-    acc[month].push(c)
-    return acc
-  }, {})
+  const months = useMemo(
+    () => groupBy([...history].sort((a, b) => b.date.localeCompare(a.date)), (c) => c.date.slice(0, 7)),
+    [history],
+  )
 
   return (
     <div className="flex flex-col gap-6">
-      {initialLoading ? (
-        <div className="bg-[var(--bg-surface)] rounded-2xl shadow p-5 flex flex-col gap-3">
-          <div className="h-4 w-32 rounded bg-[var(--bg-inset)] animate-pulse" />
-          {[0, 1, 2].map((i) => (
-            <div key={i} className="flex items-center gap-3 py-1">
-              <div className="w-8 h-8 rounded-full bg-[var(--bg-inset)] animate-pulse flex-shrink-0" />
-              <div className="h-4 w-40 rounded bg-[var(--bg-inset)] animate-pulse" />
-            </div>
-          ))}
-        </div>
+      {loading ? (
+        <LoadingCard />
       ) : history.length === 0 ? (
-        <div className="bg-[var(--bg-surface)] rounded-2xl shadow p-8 text-center text-[var(--text-muted)]">
-          <p className="text-4xl mb-3">📋</p>
-          <p>No check-ins yet. Head to the dashboard to start!</p>
-        </div>
+        <EmptyCard title="No check-ins yet">Check in from the Dashboard — each day you do shows up here.</EmptyCard>
       ) : (
-        Object.entries(grouped)
-          .sort(([a], [b]) => b.localeCompare(a))
-          .map(([month, entries]) => (
-            <div key={month} className="bg-[var(--bg-surface)] rounded-2xl shadow p-5">
-              <h2 className="font-semibold text-[var(--text-secondary)] text-sm uppercase tracking-wide mb-3">
-                {parseLocalDate(`${month}-01`).toLocaleDateString('en-US', { month: 'long', year: 'numeric' })}
-              </h2>
-              <ul className="divide-y divide-[var(--border-subtle)]">
-                {entries.map((c) => (
-                  <li key={c.id} className="py-3 flex items-center gap-3">
-                    <span
-                      className="w-8 h-8 rounded-full flex items-center justify-center text-white text-sm font-bold flex-shrink-0"
-                      style={{ backgroundColor: 'var(--primary)' }}
-                    >
-                      ✓
-                    </span>
-                    <div>
-                      <p className="text-sm font-medium text-[var(--text-primary)]">
-                        {parseLocalDate(c.date).toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' })}
-                      </p>
-                      {c.note && <p className="text-xs text-[var(--text-muted)] mt-0.5">{c.note}</p>}
-                    </div>
-                  </li>
-                ))}
-              </ul>
-              <p className="text-xs text-[var(--text-muted)] mt-3 text-right">
-                {entries.length} check-in{entries.length !== 1 ? 's' : ''} this month
-              </p>
-            </div>
-          ))
+        months.slice(0, shownMonths).map(([month, items]) => (
+          <GroupCard key={month} title={formatMonth(month)} total={`${items.length} check-in${items.length !== 1 ? 's' : ''}`}>
+            {items.map((c) => (
+              <Row
+                key={c.id}
+                tile={<Tile color="var(--primary-light)"><span style={{ color: 'var(--primary-text)' }}>✓</span></Tile>}
+                name={formatDay(c.date)}
+                detail={<>Checked in at {formatTime(c.createdAt)}{c.note && ` · ${c.note}`}</>}
+              />
+            ))}
+          </GroupCard>
+        ))
       )}
 
-      {!initialLoading && history.length > 0 && (
-        <Pagination
-          page={currentPage}
-          totalPages={totalPages}
-          onChange={setPage}
-          pageSize={pageSize}
-          pageSizeOptions={PAGE_SIZE_OPTIONS}
-          onPageSizeChange={changePageSize}
-        />
-      )}
+      <ShowMore shown={shownMonths} total={months.length} onMore={() => setShownMonths((n) => n + GROUPS_PER_PAGE)} noun="months" />
     </div>
   )
 }

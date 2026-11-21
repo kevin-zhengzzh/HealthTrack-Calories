@@ -1,33 +1,36 @@
 import { Link } from 'react-router-dom'
 import { useGoals } from '../goals'
-import InfoTip from './InfoTip'
 import { useStore } from '../store'
 import type { WorkoutRecord } from '../types'
-import TodayCard from './TodayCard'
+import InfoTip from './InfoTip'
+import TodayCard, { type Period } from './TodayCard'
 
-// Today's workouts against the daily burn goal (weekly burn goal ÷ 7, set on
-// the Plan page), with this week's progress underneath.
-// today: today's workouts; weekTotal: kcal burned since Monday.
+// Workouts for today or this week against the burn goal (Plan page). The
+// ring counts workouts only — the goal is a workout goal — and a line below
+// adds the base burn (body details on the Plan page) for the full figure.
+// records: the period's workouts; days: days of the period so far (1 for
+// today, 1–7 for this week), for the base burn.
 export default function TodayBurnCard({
-  today,
-  weekTotal,
+  records,
+  period,
+  days,
   base,
   loading,
 }: {
-  today: WorkoutRecord[]
-  weekTotal: number
+  records: WorkoutRecord[]
+  period: Period
+  days: number
   base: number | null // base burn kcal/day, null = body details incomplete
   loading: boolean
 }) {
-  const workouts = today.reduce((s, r) => s + r.calories, 0)
   const { burn } = useGoals()
   const setRecordModalOpen = useStore((s) => s.setRecordModalOpen)
-  const weekGoal = burn?.perWeek ?? null
-  const weekPct = weekGoal ? Math.min(100, (weekTotal / weekGoal) * 100) : 0
+  const workouts = records.reduce((s, r) => s + r.calories, 0)
+  const baseTotal = base === null ? null : base * days
 
   return (
     <TodayCard
-      title="Today's burn"
+      title={period === 'day' ? "Today's burn" : "This week's burn"}
       headerAction={
         <button
           onClick={() => setRecordModalOpen(true)}
@@ -38,24 +41,25 @@ export default function TodayBurnCard({
         </button>
       }
       color="var(--primary)"
-      entries={loading ? null : today.map((r) => ({ id: r.id, label: r.workoutType, time: r.createdAt, kcal: r.calories }))}
-      goal={burn?.perDay ?? null}
+      period={period}
+      entries={loading ? null : records.map((r) => ({ id: r.id, label: r.workoutType, time: r.createdAt, date: r.date, kcal: r.calories }))}
+      goal={(period === 'day' ? burn?.perDay : burn?.perWeek) ?? null}
       noun="burned"
-      noGoal="No burn goal yet."
-      emptyText="No workouts yet today."
+      noGoal={<>No burn goal yet — <Link to="/plan" className="font-medium hover:underline" style={{ color: 'var(--primary)' }}>set one in Plan</Link>.</>}
+      emptyText={period === 'day' ? 'No workouts yet today.' : 'No workouts yet this week.'}
       footer={
-        <div className="flex flex-col gap-3">
+        <>
           <p className="text-xs text-[var(--text-muted)]">
-            {base === null ? (
+            {baseTotal === null ? (
               <>
                 Add your body details on the <Link to="/plan" className="underline">Plan</Link> page to count your base
                 burn too.
               </>
             ) : (
               <>
-                With base burn {base.toLocaleString()}:{' '}
-                <span className="tabular-nums font-semibold text-[var(--text-secondary)]">{(base + workouts).toLocaleString()} kcal</span>{' '}
-                today{' '}
+                With base burn {period === 'day' ? baseTotal.toLocaleString() : `${base!.toLocaleString()} × ${days} day${days === 1 ? '' : 's'}`}:{' '}
+                <span className="tabular-nums font-semibold text-[var(--text-secondary)]">{(baseTotal + workouts).toLocaleString()} kcal</span>{' '}
+                {period === 'day' ? 'today' : 'so far'}{' '}
                 <InfoTip label="About base burn">
                   The energy your body uses in a whole day without workouts (resting metabolism × everyday activity),
                   estimated from your body details on the <Link to="/plan" className="underline">Plan</Link> page. It
@@ -64,23 +68,10 @@ export default function TodayBurnCard({
               </>
             )}
           </p>
-          {weekGoal !== null && (
-          <div>
-            <div className="flex justify-between text-xs text-[var(--text-muted)] mb-1">
-              <span>This week</span>
-              <span className="tabular-nums">
-                {weekTotal.toLocaleString()} / {weekGoal.toLocaleString()} kcal
-              </span>
-            </div>
-            <div className="h-1.5 rounded-full bg-[var(--bg-inset)] overflow-hidden">
-              <div
-                className="h-full rounded-full transition-[width] duration-500"
-                style={{ width: `${weekPct}%`, backgroundColor: 'var(--primary)' }}
-              />
-            </div>
-          </div>
-          )}
-        </div>
+          <Link to="/history/workouts" className="text-xs text-[var(--text-muted)] hover:underline self-start">
+            All workouts →
+          </Link>
+        </>
       }
     />
   )

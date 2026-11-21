@@ -7,6 +7,7 @@ import NetBanner from '../components/NetBanner'
 import { isComplete, maintenance } from '../projection'
 import TodayIntakeCard from '../components/TodayIntakeCard'
 import TodayBurnCard from '../components/TodayBurnCard'
+import type { Period } from '../components/TodayCard'
 import { localDateStr } from '../intake'
 import InfoTip from '../components/InfoTip'
 
@@ -33,7 +34,7 @@ function useNow() {
 // Today at a glance: net calories, today's intake and burn against the
 // daily goals, and the check-in. Trends live on the Statistics page.
 export default function Dashboard() {
-  const { user, setUser, checkedInToday, setCheckedInToday, setRewardStatus, pushToast, setStoreOpen, workoutRefreshKey } = useStore()
+  const { user, setUser, checkedInToday, setCheckedInToday, setRewardStatus, pushToast, setStoreOpen, workoutRefreshKey, intakeRefreshKey } = useStore()
   const now = useNow()
   const [loading, setLoading] = useState(false)
   const [lastResult, setLastResult] = useState<CheckInResult | null>(null)
@@ -74,6 +75,19 @@ export default function Dashboard() {
       window.removeEventListener('focus', loadIntake)
     }
   }, [loadIntake, todayStr])
+  // A meal added from the + menu or the intake card
+  useEffect(() => {
+    if (intakeRefreshKey > 0) loadIntake()
+  }, [intakeRefreshKey, loadIntake])
+
+  // Today or this week, for both cards at once; remembered in this browser
+  const [period, setPeriodState] = useState<Period>(() => {
+    try { return localStorage.getItem('dashboardPeriod') === 'week' ? 'week' : 'day' } catch { return 'day' }
+  })
+  const setPeriod = (p: Period) => {
+    setPeriodState(p)
+    try { localStorage.setItem('dashboardPeriod', p) } catch { /* private mode */ }
+  }
 
   async function handleCheckIn() {
     if (checkedInToday) {
@@ -104,7 +118,9 @@ export default function Dashboard() {
   const weekStart = mondayOf(now)
   const todayMeals = useMemo(() => intake?.filter((r) => r.date === today) ?? null, [intake, today])
   const todayWorkouts = useMemo(() => workoutHistory.filter((r) => r.date === today), [workoutHistory, today])
-  const weekBurned = workoutHistory.filter((r) => r.date >= weekStart && r.date <= today).reduce((s, r) => s + r.calories, 0)
+  const weekMeals = useMemo(() => intake?.filter((r) => r.date >= weekStart && r.date <= today) ?? null, [intake, weekStart, today])
+  const weekWorkouts = useMemo(() => workoutHistory.filter((r) => r.date >= weekStart && r.date <= today), [workoutHistory, weekStart, today])
+  const daysThisWeek = ((now.getDay() + 6) % 7) + 1 // Monday = 1
   const eaten = (todayMeals ?? []).reduce((s, r) => s + r.calories, 0)
   const burned = todayWorkouts.reduce((s, r) => s + r.calories, 0)
   // Base burn: a whole day's maintenance from the Plan page's body details
@@ -159,11 +175,44 @@ export default function Dashboard() {
         loading={todayMeals === null || initialLoading}
       />
 
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-        <TodayIntakeCard records={todayMeals} />
-        <TodayBurnCard today={todayWorkouts} weekTotal={weekBurned} base={base} loading={initialLoading} />
+      <div className="flex flex-col gap-3">
+        <div className="flex justify-end">
+          <PeriodSwitch value={period} onChange={setPeriod} />
+        </div>
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+          <TodayIntakeCard records={period === 'day' ? todayMeals : weekMeals} period={period} />
+          <TodayBurnCard
+            records={period === 'day' ? todayWorkouts : weekWorkouts}
+            period={period}
+            days={period === 'day' ? 1 : daysThisWeek}
+            base={base}
+            loading={initialLoading}
+          />
+        </div>
       </div>
 
+    </div>
+  )
+}
+
+// Today | This week, for both cards
+function PeriodSwitch({ value, onChange }: { value: Period; onChange: (p: Period) => void }) {
+  const options: { id: Period; label: string }[] = [{ id: 'day', label: 'Today' }, { id: 'week', label: 'This week' }]
+  return (
+    <div className="inline-flex bg-[var(--bg-inset)] rounded-full p-1 text-sm" role="tablist" aria-label="Period">
+      {options.map((o) => (
+        <button
+          key={o.id}
+          type="button"
+          role="tab"
+          aria-selected={value === o.id}
+          onClick={() => onChange(o.id)}
+          className={`px-4 py-1.5 rounded-full font-medium transition cursor-pointer ${value === o.id ? 'shadow-sm' : 'text-[var(--text-muted)] hover:text-[var(--text-secondary)]'}`}
+          style={value === o.id ? { backgroundColor: 'var(--primary-light)', color: 'var(--primary-text)' } : undefined}
+        >
+          {o.label}
+        </button>
+      ))}
     </div>
   )
 }

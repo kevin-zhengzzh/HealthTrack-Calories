@@ -21,11 +21,12 @@ import FoodLog from './pages/FoodLog'
 import Records from './pages/Records'
 import Plan from './pages/Plan'
 import Statistics from './pages/Statistics'
+import Devices from './pages/Devices'
 import Landing from './pages/Landing'
 
-// Home / Statistics / Plan / History (Food Log, Workouts, Check-ins tabs) share the sidebar and are
+// Home / Statistics / Plan / History (Food Log, Workouts, Check-ins tabs) / Device share the sidebar and are
 // treated as one "Dashboard" section in the header nav's active state
-const DASHBOARD_SECTION_PATHS = ['/', '/statistics', '/plan']
+const DASHBOARD_SECTION_PATHS = ['/', '/statistics', '/plan', '/device']
 // Pages with the sidebar: the ones above plus every History tab (/history/…)
 const isDashboardSection = (p: string) => DASHBOARD_SECTION_PATHS.includes(p) || p === '/history' || p.startsWith('/history/')
 
@@ -221,6 +222,7 @@ function PrivateLayout() {
               <Route path="/record-history" element={<Navigate to="/history/workouts" replace />} />
               <Route path="/plan" element={<Plan />} />
               <Route path="/statistics" element={<Statistics />} />
+              <Route path="/device" element={<Devices />} />
               {/* Keyed by location.key so clicking the header's Rank tab while
                   already on /rank remounts the page — resetting its local
                   tab state back to the Daily Check-in default — instead of

@@ -251,6 +251,63 @@ public class IntakeControllerTests
     }
 
     [Fact]
+    public async Task Create_ManualMeal_ComputesCalories_OnTheLocalDay()
+    {
+        using var db = NewDb();
+        var body = Body<IntakeRecordDto>(await NewController(db, new FakeRecognizer())
+            .Create(new UpdateIntakeRequest("  Toast ", 60, 265), Today.AddDays(-1).ToString("yyyy-MM-dd")));
+
+        Assert.Equal("Toast", body.FoodName);
+        Assert.Equal(159, body.Calories);
+        Assert.Equal("manual", body.Confidence);
+        Assert.False(body.HasImage);
+        Assert.Equal(Today.AddDays(-1), body.Date);
+        Assert.Equal(Me, db.IntakeRecords.Single().UserId);
+    }
+
+    [Theory]
+    [InlineData("", 100, 100)]
+    [InlineData("rice", 0, 100)]
+    [InlineData("rice", 100, 901)]
+    public async Task Create_InvalidMeal_IsRejected(string name, double grams, double density)
+    {
+        using var db = NewDb();
+        Assert.IsType<BadRequestObjectResult>(await NewController(db, new FakeRecognizer())
+            .Create(new UpdateIntakeRequest(name, grams, density)));
+        Assert.Empty(db.IntakeRecords);
+    }
+
+    [Fact]
+    public async Task Stats_SumsEachDay_AndRanksFoodsInTheRange()
+    {
+        using var db = NewDb();
+        db.IntakeRecords.AddRange(
+            new IntakeRecord { UserId = Me, FoodName = "Rice", Calories = 260, Date = Today },
+            new IntakeRecord { UserId = Me, FoodName = "rice ", Calories = 200, Date = Today.AddDays(-1) },
+            new IntakeRecord { UserId = Me, FoodName = "Apple", Calories = 80, Date = Today },
+            new IntakeRecord { UserId = Me, FoodName = "", Calories = 0, Date = Today },
+            new IntakeRecord { UserId = Me, FoodName = "Cake", Calories = 900, Date = Today.AddDays(-10) },
+            new IntakeRecord { UserId = SomeoneElse, FoodName = "Pizza", Calories = 900, Date = Today });
+        await db.SaveChangesAsync();
+
+        var stats = Body<IntakeStatsDto>(await NewController(db, new FakeRecognizer()).Stats(Today.AddDays(-6), Today));
+
+        Assert.Equal([new IntakeDayDto(Today.AddDays(-1), 200, 1), new IntakeDayDto(Today, 340, 3)], stats.Days);
+        Assert.Equal(["Rice", "Apple"], stats.Foods.Select(f => f.Name));
+        Assert.Equal((460, 2), (stats.Foods[0].Calories, stats.Foods[0].Count));
+    }
+
+    [Fact]
+    public async Task Stats_RejectsBackwardsOrOverlongRanges()
+    {
+        using var db = NewDb();
+        var c = NewController(db, new FakeRecognizer());
+        Assert.IsType<BadRequestObjectResult>(await c.Stats(Today, Today.AddDays(-1)));
+        Assert.IsType<BadRequestObjectResult>(await c.Stats(Today.AddDays(-366), Today));
+        Assert.IsType<OkObjectResult>(await c.Stats(Today.AddDays(-365), Today));
+    }
+
+    [Fact]
     public async Task OtherUsersRecords_AreInvisible()
     {
         using var db = NewDb();

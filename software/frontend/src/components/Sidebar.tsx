@@ -6,6 +6,7 @@ const links = [
   { to: '/statistics', label: 'Statistics', end: false },
   { to: '/plan', label: 'Plan', end: false },
   { to: '/history', label: 'History', end: false },
+  { to: '/device', label: 'Device', end: false },
 ]
 
 export default function Sidebar() {

@@ -1,15 +1,19 @@
 import { useEffect, useMemo, useState } from 'react'
 
-// Shared layout of the dashboard's "Today's intake" and "Today's burn" cards,
-// so the two always look and behave the same: a ring where the full circle
-// is the daily goal and each entry adds a slice (one colour per card, gaps
-// between entries), a status line, and the list of today's entries. Past
-// the goal the ring is full and the slices share it.
+// Shared layout of the dashboard's intake and burn cards, so the two always
+// look and behave the same: a ring where the full circle is the goal for the
+// period (today, or this week) and each entry adds a slice (one colour per
+// card, gaps between entries), a status line beside it, and the period's
+// entries listed underneath. Past the goal the ring is full and the slices
+// share it.
+
+export type Period = 'day' | 'week'
 
 export interface TodayEntry {
   id: number
   label: string
   time: string // ISO
+  date: string // yyyy-MM-dd, the local day it was logged on
   kcal: number
 }
 
@@ -21,33 +25,38 @@ const GAP = 3
 
 const fmtTime = (iso: string) =>
   new Date(iso).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit', hour12: false })
+const fmtWeekday = (date: string) => {
+  const [y, m, d] = date.split('-').map(Number)
+  return new Date(y, m - 1, d).toLocaleDateString('en-US', { weekday: 'short' })
+}
 
 export default function TodayCard({
   title,
   headerAction,
   color,
+  period,
   entries,
   goal,
   noun,
   noGoal,
   emptyText,
-  loading,
   footer,
 }: {
   title: string
   headerAction: React.ReactNode
   color: string
+  period: Period
   entries: TodayEntry[] | null // null = loading
-  goal: number | null // daily goal, null = not set
+  goal: number | null // goal for the period, null = not set
   noun: string // "eaten" / "burned"
   noGoal: React.ReactNode
   emptyText: string
-  loading?: boolean
   footer?: React.ReactNode
 }) {
   const [hoverId, setHoverId] = useState<number | null>(null)
   const list = useMemo(() => entries ?? [], [entries])
   const total = list.reduce((s, e) => s + e.kcal, 0)
+  const periodWord = period === 'day' ? 'today' : 'this week'
 
   // Grow in from empty once data is there; later changes animate via CSS
   const [grown, setGrown] = useState(false)
@@ -96,14 +105,14 @@ export default function TodayCard({
         {headerAction}
       </div>
 
-      <div className="flex flex-col sm:flex-row items-center gap-5 flex-1">
+      <div className="flex flex-col sm:flex-row items-center gap-5">
         <div className="relative shrink-0" style={{ width: SIZE, height: SIZE }}>
           <svg
             viewBox={`0 0 ${SIZE} ${SIZE}`}
             width={SIZE}
             height={SIZE}
             role="img"
-            aria-label={goal ? `${total} of ${goal} kcal ${noun} today (${percent}%)` : `${total} kcal ${noun} today`}
+            aria-label={goal ? `${total} of ${goal} kcal ${noun} ${periodWord} (${percent}%)` : `${total} kcal ${noun} ${periodWord}`}
           >
             <circle cx={SIZE / 2} cy={SIZE / 2} r={R} fill="none" stroke="var(--border)" strokeWidth={STROKE} />
             <g transform={`rotate(-90 ${SIZE / 2} ${SIZE / 2})`}>
@@ -141,43 +150,47 @@ export default function TodayCard({
           </svg>
         </div>
 
-        <div className="flex-1 w-full min-w-0 flex flex-col">
+        <div className="flex-1 w-full min-w-0 flex flex-col gap-3">
           {goal === null ? (
-            <p className="text-sm text-[var(--text-muted)] mb-3">{noGoal}</p>
+            <p className="text-sm text-[var(--text-muted)]">{noGoal}</p>
           ) : (
-            <p className="text-sm text-[var(--text-muted)] mb-3">
+            <p className="text-sm text-[var(--text-muted)]">
               {over
-                ? <><span className="font-semibold" style={{ color: accent }}>{(total - goal).toLocaleString()} kcal over</span> today's goal ({percent}%)</>
-                : <><span className="font-semibold text-[var(--text-secondary)]">{(goal - total).toLocaleString()} kcal</span> to go ({percent}%)</>}
+                ? <><span className="font-semibold" style={{ color: accent }}>{(total - goal).toLocaleString()} kcal over</span> {period === 'day' ? "today's" : "this week's"} goal ({percent}%)</>
+                : <><span className="font-semibold text-[var(--text-secondary)]">{(goal - total).toLocaleString()} kcal</span> to go {periodWord} ({percent}%)</>}
             </p>
           )}
-
-          {entries === null || loading ? (
-            <p className="text-sm text-[var(--text-muted)]">Loading…</p>
-          ) : rows.length === 0 ? (
-            <p className="text-sm text-[var(--text-muted)]">{emptyText}</p>
-          ) : (
-            <ul className="flex flex-col gap-1 text-sm max-h-40 overflow-y-auto pr-1">
-              {rows.map((e) => (
-                <li
-                  key={e.id}
-                  className="flex items-center gap-2 rounded-md px-1 py-0.5 cursor-default"
-                  style={{ backgroundColor: hoverId === e.id ? 'var(--bg-inset)' : undefined }}
-                  onPointerEnter={() => setHoverId(e.id)}
-                  onPointerLeave={() => setHoverId((cur) => (cur === e.id ? null : cur))}
-                >
-                  <span className="tabular-nums text-xs text-[var(--text-muted)] w-10 shrink-0">{fmtTime(e.time)}</span>
-                  <span className="truncate text-[var(--text-secondary)]">{e.label}</span>
-                  <span className="ml-auto tabular-nums font-semibold text-[var(--text-secondary)] shrink-0">
-                    {e.kcal.toLocaleString()} kcal
-                  </span>
-                </li>
-              ))}
-            </ul>
-          )}
-
-          {footer && <div className="mt-auto pt-3">{footer}</div>}
+          {footer}
         </div>
+      </div>
+
+      {/* The period's entries, under the ring */}
+      <div className="mt-4 pt-3 border-t border-[var(--border)]">
+        {entries === null ? (
+          <p className="text-sm text-[var(--text-muted)]">Loading…</p>
+        ) : rows.length === 0 ? (
+          <p className="text-sm text-[var(--text-muted)]">{emptyText}</p>
+        ) : (
+          <ul className="flex flex-col gap-1 text-sm max-h-48 overflow-y-auto pr-1">
+            {rows.map((e) => (
+              <li
+                key={e.id}
+                className="flex items-center gap-2 rounded-md px-1 py-1 cursor-default"
+                style={{ backgroundColor: hoverId === e.id ? 'var(--bg-inset)' : undefined }}
+                onPointerEnter={() => setHoverId(e.id)}
+                onPointerLeave={() => setHoverId((cur) => (cur === e.id ? null : cur))}
+              >
+                <span className={`tabular-nums text-xs text-[var(--text-muted)] shrink-0 ${period === 'week' ? 'w-[4.5rem]' : 'w-10'}`}>
+                  {period === 'week' && `${fmtWeekday(e.date)} `}{fmtTime(e.time)}
+                </span>
+                <span className="truncate text-[var(--text-secondary)]">{e.label}</span>
+                <span className="ml-auto tabular-nums font-semibold text-[var(--text-secondary)] shrink-0">
+                  {e.kcal.toLocaleString()} kcal
+                </span>
+              </li>
+            ))}
+          </ul>
+        )}
       </div>
     </div>
   )

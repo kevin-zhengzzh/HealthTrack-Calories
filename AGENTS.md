@@ -229,6 +229,23 @@ Phase 2 的 `msa-backend` / `msa-frontend` 和它的 `neondb` 库**保持不动*
 - **不变**：消耗圆环和消耗目标仍然只算运动（目标是运动目标）；消耗卡片底部一行显示 "With base burn X: Y kcal today"，没身体数据时提示去 Plan 填。
 - **代价**：按整天计，早上刚吃完早饭时 Net 会是很大的负数；没有按时间折算，免得数字一直在变、难以理解。
 
+### D-30 独立的 Device 页；网页上可以手动记一餐；悬浮 + 改为菜单（2026-11-22）
+- **Device 页**：侧边栏 Dashboard / Statistics / Plan / History / **Device**（`/device`），配对、设备列表、移除都从 Food Log 搬到这里（D-27 里"设备管理仍在 Food Log 标签里"不再成立）。以后的设备状态、固件版本等也放这里。
+- **手动记一餐**：`POST /api/intake?localDate=`，body 和修改一样 `{foodName, weightGrams, caloriesPer100g}`，热量仍由后端按 重量 × kcal/100g 计算（D-03 的原则）；`Confidence = "manual"`，没有照片，Food Log 标签显示 "Typed in"。只记到今天。
+- **入口**：首页摄入卡片右上角 "+ Add meal"（和消耗卡片的 "+ Record workout" 对称）；右下角悬浮 + 点开是两项菜单 Add meal / Record workout。两个弹窗的开关都在 store（`mealModalOpen` / `recordModalOpen`），保存后 `intakeRefreshKey` / `workoutRefreshKey` 加一，各页面据此刷新。
+- **悬浮按钮**（聊天、回到顶部、+）离窗口右边 16px（原来宽屏是 64px，会盖住宽页面右侧的数字）。
+
+### D-31 History 三个标签统一成 Food Log 的样式（2026-11-22）
+- **决定**：共用 `components/HistoryParts.tsx`（`GroupCard` 卡片标题 + 右侧合计、`Row` 64px 方块 + 名称 + 灰色明细 + 右侧数字 + 图标按钮、`Modal`、`SearchBox`、`ShowMore`）和 `historyFormat.ts`（日期格式、分组、模糊搜索、按钮样式）。Food Log 和 Workouts 每天一张卡片、都有搜索；Check-ins 一天只有一条，所以按月一张卡片。分页器改成 "Show older days/months"（每次 10 张卡片）。
+- Food Log 顶部的 "Eaten today + 目标" 卡片删除（目标只在 Plan 设，首页已显示今天的进度）。
+
+### D-32 首页两张卡片加 Today / This week 切换（2026-11-22）
+- **决定**：两张卡片上方一个共用的切换（记在浏览器 localStorage）。This week = 本周一到今天：圆环整圈 = 每周目标，每条记录一段；"还差/超出"按每周目标；基础消耗 × 本周已过天数。圆环下方列出该时段的记录（本周时带星期几）。净热量横幅始终是今天。
+
+### D-33 Statistics 页按日历周/月/年统计（2026-11-22，完成首页改版三步计划的第 3 步）
+- **决定**：顶部 Intake | Burned 切换；Week（周一至周日）/ Month / Year，‹ › 往回翻（不能翻到未来）。显示合计和日均（**只算有记录的天**——忘记记录的那天不等于没吃），柱状图（周、月每天一根；年每月一根，值为该月的日均），虚线 = 每日目标，点线 = 日均，悬停看数值，纵轴最低 100。下面是排行：摄入 = Top foods（按热量，最多 10 个，按名称不区分大小写合并），消耗 = 按运动类型。AI 周总结和签到热力图保留在下面；每周目标圆环和旧的运动柱状图删除。
+- **数据**：摄入用新接口 `GET /api/intake/stats?from=&to=`（每天合计 + Top 10 食物，范围最多 366 天）——普通历史接口只返回最近 500 条，不够一年；运动记录本来就全部返回，在前端统计。周期计算在 `src/stats.ts`（有单元测试），图表是 `PeriodBarChart`（摄入、消耗共用，只换颜色）。
+
 ### D-14 部署工作流暂时只能手动触发（2026-11-18；2026-11-19 已恢复自动部署）
 - **决定**：`deploy.yml` 只保留 `workflow_dispatch`。
 - **原因**：最初镜像名和应用名都指向 Phase 2，自动部署会覆盖线上服务。现在已改为 `healthtrack-*`，并且首次部署已成功。
@@ -268,6 +285,7 @@ Phase 2 的 `msa-backend` / `msa-frontend` 和它的 `neondb` 库**保持不动*
 | 2026-11-21 | Net 问号提示；Plan 页左右一致（消耗目标可清除）、身体数据、一年体重预测（D-26，迁移 `BurnGoalOptionalAndBodyProfile`，后端 153 / 前端 47 个测试） |
 | 2026-11-21 | 第 2 步：Dashboard 只看今天（D-25）：净热量横幅、今日摄入/消耗对称圆环卡片、横向签到卡片；临时 Statistics 页放原来的图表；本地 Playwright 截图检查了桌面和手机布局 |
 | 2026-11-22 | 首页 Burned / Net 计入基础消耗（D-29）；本地截图检查了三种情况（有身体数据 ± 运动、无身体数据）和手机布局 |
+| 2026-11-22 | Device 页、手动记一餐、+ 菜单（D-30）；History 统一样式（D-31）；首页 Today / This week（D-32）；Statistics 周/月/年重做（D-33）。后端 159 / 前端 54 个测试，本地 Playwright 截图检查了宽屏和手机 |
 | 2026-11-21 | 统计/首页改版三步计划的第 1 步：Plan 页 + 目标按周存储（D-24，迁移 `WeeklyIntakeGoal`，共 141 个测试）。第 2 步首页改版、第 3 步统计页（Intake/Burned 切换，自然周/月/年可往回翻，日均只算有记录的天，排行榜） |
 
 ---

@@ -56,6 +56,13 @@ interface AppState {
   recordModalOpen: boolean
   setRecordModalOpen: (open: boolean) => void
 
+  // The Add meal modal (typed in, no scale): opened from the floating + menu
+  // or the dashboard's intake card. Saving bumps intakeRefreshKey.
+  mealModalOpen: boolean
+  setMealModalOpen: (open: boolean) => void
+  intakeRefreshKey: number
+  bumpIntakeRefresh: () => void
+
   // Bumped whenever rewards are claimed from the header's Daily Tasks menu
   // (visible on every page, including Rank) — since points change, the
   // leaderboard watches this to know when to refetch
@@ -154,6 +161,11 @@ export const useStore = create<AppState>((set) => ({
 
   recordModalOpen: false,
   setRecordModalOpen: (recordModalOpen) => set({ recordModalOpen }),
+
+  mealModalOpen: false,
+  setMealModalOpen: (mealModalOpen) => set({ mealModalOpen }),
+  intakeRefreshKey: 0,
+  bumpIntakeRefresh: () => set((s) => ({ intakeRefreshKey: s.intakeRefreshKey + 1 })),
 
   leaderboardRefreshKey: 0,
   bumpLeaderboardRefresh: () => set((s) => ({ leaderboardRefreshKey: s.leaderboardRefreshKey + 1 })),

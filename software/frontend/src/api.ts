@@ -1,5 +1,5 @@
 import type { GoalKind, Goals, Profile } from './types'
-import type { AuthResponse, CaloriesLeaderboardEntry, ChatQuota, ChatStreamEvent, ChatTurn, CheckIn, CheckinTodayLeaderboardEntry, CheckInResult, CreatedDevice, Device, IntakeRecord, LeaderboardEntry, PointTransaction, RewardStatus, Skin, StreakLeaderboardEntry, User, WeeklySummary, WorkoutRecord, WorkoutSubmitResult } from './types'
+import type { AuthResponse, CaloriesLeaderboardEntry, ChatQuota, ChatStreamEvent, ChatTurn, CheckIn, CheckinTodayLeaderboardEntry, CheckInResult, CreatedDevice, Device, IntakeRecord, IntakeStats, LeaderboardEntry, PointTransaction, RewardStatus, Skin, StreakLeaderboardEntry, User, WeeklySummary, WorkoutRecord, WorkoutSubmitResult } from './types'
 import { useStore } from './store'
 import { createSseParser } from './sse'
 
@@ -253,6 +253,17 @@ export const updateIntake = (id: number, foodName: string, weightGrams: number, 
     method: 'PUT',
     body: JSON.stringify({ foodName, weightGrams, caloriesPer100g }),
   })
+
+// A meal typed in on the website (no photo); calories = grams × kcal/100 g
+export const addIntake = (foodName: string, weightGrams: number, caloriesPer100g: number) =>
+  request<IntakeRecord>(`/intake?localDate=${localDateStr()}`, {
+    method: 'POST',
+    body: JSON.stringify({ foodName, weightGrams, caloriesPer100g }),
+  })
+
+// Per-day totals and top foods for the Statistics page (inclusive dates)
+export const getIntakeStats = (from: string, to: string) =>
+  request<IntakeStats>(`/intake/stats?from=${from}&to=${to}`)
 
 export const deleteIntake = (id: number) =>
   request<void>(`/intake/${id}`, { method: 'DELETE' })

@@ -19,7 +19,9 @@ public class IntakeRecord
 
     // Model's own confidence ("high" / "medium" / "low"), shown so users
     // know which entries are worth double-checking
+    // or "manual" for a meal typed in on the website
     public string Confidence { get; set; } = string.Empty;
+    public const string ManualConfidence = "manual";
     // True once the user has edited the AI's food name or calorie density
     public bool Corrected { get; set; }
 
