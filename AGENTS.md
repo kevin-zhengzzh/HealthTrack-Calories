@@ -356,3 +356,10 @@ Phase 2 的 `msa-backend` / `msa-frontend` 和它的 `neondb` 库**保持不动*
 - [ ] 设备上的摄入圆环只在上传/账号检查时更新，网页改动要碰一下设备才显示（D-21，目前可接受）
 - [ ] README 补充智能秤功能说明
 - [ ] 识别失败（或误判为非食物）的照片是否要保留供人工确认
+- [ ] **免责说明**（2026-11-22 讨论，用户说"之后做"）。现有：聊天底部 "AI answers can be wrong. Not medical advice."、Plan 预测 "A rough estimate, not medical advice."。计划加（文案英文）：
+  1. 新页 `/disclaimer` + 每页底部（含登录/注册）一行 "Not medical advice · Disclaimer"：不是医疗服务；热量/基础消耗/预测/AI 建议都是估算；怀孕或哺乳、未满 18 岁、慢性病、进食障碍史者先咨询专业人士；不适时停止运动
+  2. 注册按钮下一行告知并链到说明页（不加勾选框）
+  3. AI 计划卡片 Apply 上方："A suggestion, not medical advice. Check with a professional if you're pregnant, under 18 or have a health condition."（唯一会写数据的地方，最必要）
+  4. Plan 页顶部一句提醒
+  5. Food Log 搜索框下："Calories are estimates from the photo and the scale's weight; tap ✎ to correct."
+  —— 我的建议是 1 + 3 必做，2、4、5 可选；用户还没定做哪几项
