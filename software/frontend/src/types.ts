@@ -162,9 +162,19 @@ export interface WeeklySummary {
   source: 'ai' | 'cache' | 'fallback'
 }
 
+// Goals the assistant proposed (Set my plan). Nothing is saved until the
+// user presses Apply on the card; null = that goal isn't part of it.
+export interface GoalProposal {
+  intakePerDay: number | null
+  burnPerWeek: number | null
+  currentIntakePerDay: number | null
+  currentBurnPerWeek: number | null
+}
+
 export type ChatStreamEvent =
   | { type: 'text'; text: string }
   | { type: 'tool'; name: string }
+  | { type: 'proposal'; proposal: GoalProposal }
   | { type: 'done'; remaining: number }
   | { type: 'error'; message: string }
 

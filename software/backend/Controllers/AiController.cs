@@ -79,6 +79,7 @@ public class AiController : ControllerBase
                 {
                     AssistantText t => new { type = "text", text = t.Text },
                     AssistantToolStarted t => new { type = "tool", name = t.Name },
+                    AssistantProposal p => new { type = "proposal", proposal = p.Proposal },
                     _ => throw new InvalidOperationException($"Unhandled assistant event {e.GetType().Name}"),
                 };
                 await WriteEventAsync(payload, ct);

@@ -1,5 +1,6 @@
 using System.Globalization;
 using System.Runtime.CompilerServices;
+using System.Text.Json;
 using backend.DTOs;
 
 namespace backend.Services.Ai;
@@ -7,6 +8,9 @@ namespace backend.Services.Ai;
 public abstract record AssistantEvent;
 public sealed record AssistantText(string Text) : AssistantEvent;
 public sealed record AssistantToolStarted(string Name) : AssistantEvent;
+// A goal change the model proposed (validated by propose_goals); the client
+// shows it as a card and only the user can apply it
+public sealed record AssistantProposal(JsonElement Proposal) : AssistantEvent;
 
 // The agent loop behind POST /api/ai/chat (spec §5.1). Streams the model's
 // text as it arrives; when the model asks for tools, runs them and calls the
@@ -85,10 +89,18 @@ public class ChatAssistantService
                 yield return new AssistantToolStarted(toolCall.Name);
                 var result = await _tools.ExecuteAsync(userId, today, toolCall, ct);
                 messages.Add(ChatMessage.ToolResult(toolCall.Id, result));
+                if (toolCall.Name == ChatToolExecutor.ProposeGoals && ProposalIn(result) is { } proposal)
+                    yield return new AssistantProposal(proposal);
             }
         }
 
         yield return new AssistantText(LoopLimitReply);
+    }
+
+    private static JsonElement? ProposalIn(string toolResult)
+    {
+        using var doc = JsonDocument.Parse(toolResult);
+        return doc.RootElement.TryGetProperty("proposal", out var p) ? p.Clone() : null;
     }
 
     internal static List<ChatMessage> BuildMessages(DateOnly today, IReadOnlyList<AiChatTurn>? history, string message, ChatMode? mode = null)

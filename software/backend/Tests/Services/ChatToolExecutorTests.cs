@@ -234,18 +234,81 @@ public class ChatToolExecutorTests
     }
 
     [Fact]
-    public void Definitions_CoverAllFiveTools()
+    public void Definitions_CoverEveryTool_AndOnlyProposeGoalsIsLeftOutOfTheReadOnlySet()
     {
         Assert.Equal(
             [ChatToolExecutor.WorkoutSummary, ChatToolExecutor.CheckInStatus, ChatToolExecutor.WeeklyGoalProgress,
-             ChatToolExecutor.Rank, ChatToolExecutor.PointsSummary],
+             ChatToolExecutor.Rank, ChatToolExecutor.PointsSummary, ChatToolExecutor.PlanContext, ChatToolExecutor.ProposeGoals],
             ChatToolExecutor.Definitions.Select(d => d.Name));
+        Assert.Equal(
+            ChatToolExecutor.Definitions.Select(d => d.Name).Where(n => n != ChatToolExecutor.ProposeGoals),
+            ChatToolExecutor.ReadOnlyDefinitions.Select(d => d.Name));
+    }
+
+    // ---- Plan tools ----
+
+    [Fact]
+    public async Task PlanContext_GivesGoalsBaseBurnAndRecentAverages()
+    {
+        var db = NewDb();
+        var me = db.Users.Find(Me)!;
+        (me.Sex, me.BirthYear, me.HeightCm, me.WeightKg, me.ActivityLevel) = ("male", 1986, 180, 80, "sedentary");
+        me.WeeklyIntakeGoal = 1800 * 7;
+        db.IntakeRecords.AddRange(
+            new IntakeRecord { UserId = Me, Calories = 1500, Date = Today },
+            new IntakeRecord { UserId = Me, Calories = 500, Date = Today },
+            new IntakeRecord { UserId = Me, Calories = 1800, Date = Today.AddDays(-3) },
+            new IntakeRecord { UserId = Me, Calories = 9999, Date = Today.AddDays(-28) },  // outside the 28 days
+            new IntakeRecord { UserId = SomeoneElse, Calories = 9999, Date = Today });
+        db.WorkoutRecords.AddRange(Workout(Me, Today, 400), Workout(Me, Today.AddDays(-10), 400));
+        await db.SaveChangesAsync();
+        var (executor, _) = NewExecutor(db);
+
+        var result = await Run(executor, ChatToolExecutor.PlanContext);
+
+        Assert.Equal(1800, result.GetProperty("currentGoals").GetProperty("intakePerDay").GetInt32());
+        Assert.Equal(2000, result.GetProperty("currentGoals").GetProperty("burnPerWeek").GetInt32());
+        // (10×80 + 6.25×180 − 5×40 + 5) × 1.2 = 2076
+        Assert.Equal(2076, result.GetProperty("baseBurnPerDay").GetInt32());
+        Assert.Equal(1500, result.GetProperty("minimumIntakePerDay").GetInt32());
+        var last = result.GetProperty("lastDays");
+        Assert.Equal(2, last.GetProperty("daysWithMealsLogged").GetInt32());
+        Assert.Equal(1900, last.GetProperty("avgIntakePerLoggedDay").GetInt32());
+        Assert.Equal(200, last.GetProperty("avgWorkoutBurnPerWeek").GetInt32());
     }
 
     [Fact]
-    public void DefinitionsFor_NullMeansAllToolsAndAListNarrowsThem()
+    public async Task PlanContext_WithoutBodyDetails_SaysWhatIsMissing()
     {
-        Assert.Same(ChatToolExecutor.Definitions, ChatToolExecutor.DefinitionsFor(null));
+        var (executor, _) = NewExecutor(NewDb());
+
+        var result = await Run(executor, ChatToolExecutor.PlanContext);
+
+        Assert.Equal(JsonValueKind.Null, result.GetProperty("baseBurnPerDay").ValueKind);
+        Assert.Equal(5, result.GetProperty("body").GetProperty("missing").GetArrayLength());
+        Assert.Equal(1200, result.GetProperty("minimumIntakePerDay").GetInt32());
+    }
+
+    [Fact]
+    public async Task ProposeGoals_SavesNothing_AndRejectsUnsafeOrEmptyProposals()
+    {
+        var db = NewDb();
+        var (executor, _) = NewExecutor(db);
+
+        var ok = await Run(executor, ChatToolExecutor.ProposeGoals, """{"intakePerDay":1900}""");
+        Assert.Equal(1900, ok.GetProperty("proposal").GetProperty("intakePerDay").GetInt32());
+        Assert.Equal(JsonValueKind.Null, ok.GetProperty("proposal").GetProperty("burnPerWeek").ValueKind);
+        Assert.Null(db.Users.Find(Me)!.WeeklyIntakeGoal);
+        Assert.Equal(2000, db.Users.Find(Me)!.WeeklyCalorieGoal);
+
+        foreach (var bad in new[] { "{}", """{"intakePerDay":900}""", """{"burnPerWeek":0}""", """{"intakePerDay":"lots"}""" })
+            Assert.True((await Run(executor, ChatToolExecutor.ProposeGoals, bad)).TryGetProperty("error", out _), bad);
+    }
+
+    [Fact]
+    public void DefinitionsFor_NullMeansTheReadOnlyToolsAndAListNarrowsThem()
+    {
+        Assert.Same(ChatToolExecutor.ReadOnlyDefinitions, ChatToolExecutor.DefinitionsFor(null));
         Assert.Equal([ChatToolExecutor.Rank], ChatToolExecutor.DefinitionsFor([ChatToolExecutor.Rank]).Select(d => d.Name));
     }
 
