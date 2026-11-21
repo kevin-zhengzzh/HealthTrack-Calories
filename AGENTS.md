@@ -186,6 +186,10 @@ Phase 2 的 `msa-backend` / `msa-frontend` 和它的 `neondb` 库**保持不动*
 - **网络**：后台任务，与上传、账号检查互斥（一次只有一个 TLS 连接）；这两个请求本身也能验证密钥（401 → 回到配对界面），所以点圆环和在 Today 页里触摸不再额外触发账号检查。
 - **不做**：用户考虑过"识别后在设备上点 Save/Discard 再记录"，最后决定保持自动记录，记错了在设备的 Today 页或网页上删除/修改即可。
 
+### D-23 净热量只做展示，目标仍然比较"吃了多少"（2026-11-21）
+- **决定**：Dashboard 的 "Today's intake" 卡片加一行 Eaten / Burned / Net（摄入 − 当天运动消耗），运动数据用 Dashboard 已经加载的 workout 记录（按用户本地日期），不新增接口。圆环和"还剩多少"仍按**摄入**对比每日目标。
+- **原因**：每日目标是"摄入目标"（D-21），如果改成按净热量算，运动后目标会"变大"，含义就混了；净热量作为参考数字更直观。
+
 ### D-14 部署工作流暂时只能手动触发（2026-11-18；2026-11-19 已恢复自动部署）
 - **决定**：`deploy.yml` 只保留 `workflow_dispatch`。
 - **原因**：最初镜像名和应用名都指向 Phase 2，自动部署会覆盖线上服务。现在已改为 `healthtrack-*`，并且首次部署已成功。
@@ -218,6 +222,7 @@ Phase 2 的 `msa-backend` / `msa-frontend` 和它的 `neondb` 库**保持不动*
 | 2026-11-20 | 账号检查失败后退避重试；设备 Today 页：查看/删除当天记录（D-22，共 131 个测试）—— PR #6 合并部署（`16b952b`） |
 | 2026-11-20 | Today 页行展开（同 Wi-Fi 列表）、最新在上、打开时每 10 秒刷新、3 分钟无操作自动关闭 —— PR #7 合并部署（`d290b1c`） |
 | 2026-11-20 | 真机实拍真实食物（番茄、炒肉、炒饭、烤串、火龙果）已能识别入库，kcal/100g 合理 |
+| 2026-11-21 | Dashboard 净热量（D-23）；串口日志过滤脚本 `tools/serial_log.py` |
 
 ---
 
@@ -242,7 +247,8 @@ Phase 2 的 `msa-backend` / `msa-frontend` 和它的 `neondb` 库**保持不动*
 - **`net::forgetAll()` 只删保存的网络，不断开当前连接**：Reset 时要再调用 `WiFi.disconnect(false, true)`（同时清除 SDK 自己保存的凭据）。
 - **一次触摸会穿透到下一个界面**：`tapNow` 在整轮 `loop()` 里都有效。Wi-Fi 列表的 Exit 和配对界面的 Wi-Fi 按钮在同一位置，点 Exit 后同一轮里又触发了 Wi-Fi，表现为"回不去配对码"。界面切换后要把 `tapNow` 置为 false。
 - **Bash heredoc 里的 Python 补丁脚本会把 `\n` 变成真换行**：C++ 字符串里的 `\n` 被破坏，断言失败（或更糟，悄悄写坏文件）。补丁脚本先写到 scratchpad 的 `.py` 文件再运行；文件是 CRLF，脚本里先转 LF、写回时再转 CRLF。
-- **读串口要用不带 `-I` 的 python**：pyserial 装在用户 site-packages，`python -I` 找不到。串口日志几乎被 `cam_hal: EV-EOF-OVF` 刷屏，要用 grep 过滤（见待办）。
+- **读串口要用不带 `-I` 的 python**：pyserial 装在用户 site-packages，`python -I` 找不到。用 `python firmware/stackchan-scale/tools/serial_log.py [COM3] [秒数]`，它会过滤相机的丢帧警告。
+- **`cam_hal: EV-EOF-OVF` / `EV-VSYNC-OVF` 刷屏关不掉**：预编译相机驱动在中断里用"早期日志"打印（每秒好几条），`esp_log_level_set` 管不到；试过 XCLK 6MHz（更多）、`CAMERA_GRAB_WHEN_EMPTY`（更多），都没用，已还原。只是预览丢帧，拍照不受影响；读日志时过滤即可。
 - **开机那次账号检查失败 → 摄入圆环不出现**：圆环要有数据才画；原来失败后要等 6 小时才重试（已改为退避重试，D-19）。
 - **固件里函数/变量的定义顺序**：`main.cpp` 是单文件，新代码用到后面才定义的东西（`inRect`、`todayBusy`、`localDate`）会编译失败；把定义挪到前面或加前置声明。
 - **EF Core 的 `ExecuteDeleteAsync`** 内存测试库不支持；需要在测试里跑到的代码改用加载后 `RemoveRange`。
@@ -262,8 +268,8 @@ Phase 2 的 `msa-backend` / `msa-frontend` 和它的 `neondb` 库**保持不动*
 - [ ] 设备上的 Wi-Fi 列表加"其他网络…"，可以手动输入隐藏网络的名字；确认仅 WPA3 的网络能否连接
 - [ ] 后端最小副本 0 → 冷启动 20–30 秒，可能导致长时间闲置后的第一次上传超时；决定是否改为 1
 - [ ] 舵机堵转保护（官方固件有）
-- [ ] 与现有功能联动：~~Dashboard 摄入~~（已做，D-21）、Dashboard 净热量（摄入 − 运动）、AI 助手读取摄入数据、积分（用户说暂缓）
-- [ ] 串口日志被 `cam_hal: EV-EOF-OVF` 刷屏：调低相机驱动日志等级或调整取帧
+- [ ] 与现有功能联动：~~Dashboard 摄入~~（D-21）、~~Dashboard 净热量~~（D-23）、AI 助手读取摄入数据、积分（用户说暂缓）
+- [x] 串口日志被 `cam_hal: EV-EOF-OVF` 刷屏 —— 固件里关不掉（见"踩过的坑"），改用 `tools/serial_log.py` 过滤
 - [ ] 秤的玩法：饭后称剩菜（按差值记实际吃掉的量）；一盘逐个加食物（按重量差分别识别）
 - [ ] 设备上的摄入圆环只在上传/账号检查时更新，网页改动要碰一下设备才显示（D-21，目前可接受）
 - [ ] README 补充智能秤功能说明

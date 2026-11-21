@@ -8,6 +8,7 @@ import WeeklyGoalDonut from '../components/WeeklyGoalDonut'
 import CheckInHeatmap from '../components/CheckInHeatmap'
 import WeeklySummaryCard from '../components/WeeklySummaryCard'
 import TodayIntakeCard from '../components/TodayIntakeCard'
+import { localDateStr } from '../intake'
 import { useLockBodyScroll } from '../hooks/useLockBodyScroll'
 
 // Ticks every second so the header clock stays live while the page is open.
@@ -91,6 +92,10 @@ export default function Dashboard() {
   // rather than a stale streak that looks "already earned" for today.
   const displayStreak = checkedInToday ? (user?.streak ?? 0) : 0
 
+  // kcal burned in today's workouts (workout dates are the user's local day)
+  const today = localDateStr(now)
+  const burnedToday = workoutHistory.filter((r) => r.date === today).reduce((s, r) => s + r.calories, 0)
+
   return (
     <div className="flex flex-col gap-6">
       {/* items-start (not center) — keeps the "Dashboard" title's top edge
@@ -115,7 +120,7 @@ export default function Dashboard() {
 
       <WeeklySummaryCard />
 
-      <TodayIntakeCard />
+      <TodayIntakeCard burned={initialLoading ? null : burnedToday} />
 
       {/*
         A true 2x2 grid (not two independent columns) so row 2 — the weekly

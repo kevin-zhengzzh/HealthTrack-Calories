@@ -19,7 +19,9 @@ const mealName = (r: IntakeRecord) => r.foodName || 'Unnamed food'
 
 // Today's food intake as a ring: the full circle is the daily goal, each
 // meal adds a slice. Past the goal the ring is full and the slices share it.
-export default function TodayIntakeCard() {
+// burned: kcal from today's workouts, for the eaten − burned = net row
+// (null while the workouts are still loading).
+export default function TodayIntakeCard({ burned }: { burned: number | null }) {
   const { goal } = useIntakeGoal()
   const [records, setRecords] = useState<IntakeRecord[] | null>(null)
   const [hoverId, setHoverId] = useState<number | null>(null)
@@ -145,6 +147,14 @@ export default function TodayIntakeCard() {
             </p>
           )}
 
+          {records !== null && burned !== null && (
+            <div className="grid grid-cols-3 gap-2 mb-3 text-center" aria-label="Net calories today">
+              <NetStat label="Eaten" value={total} />
+              <NetStat label="Burned" value={-burned} />
+              <NetStat label="Net" value={total - burned} strong />
+            </div>
+          )}
+
           {records === null ? (
             <p className="text-sm text-[var(--text-muted)]">Loading…</p>
           ) : meals.length === 0 ? (
@@ -173,6 +183,19 @@ export default function TodayIntakeCard() {
           )}
         </div>
       </div>
+    </div>
+  )
+}
+
+// One figure of the eaten / burned / net row; negative values get a real minus sign
+function NetStat({ label, value, strong = false }: { label: string; value: number; strong?: boolean }) {
+  const text = (value < 0 ? '−' : '') + Math.abs(value).toLocaleString()
+  return (
+    <div className="rounded-lg bg-[var(--bg-inset)] px-2 py-1.5">
+      <p className="text-[11px] uppercase tracking-wide text-[var(--text-muted)]">{label}</p>
+      <p className={`tabular-nums ${strong ? 'font-bold text-[var(--text-primary)]' : 'font-semibold text-[var(--text-secondary)]'}`}>
+        {text} <span className="text-xs font-normal text-[var(--text-muted)]">kcal</span>
+      </p>
     </div>
   )
 }
