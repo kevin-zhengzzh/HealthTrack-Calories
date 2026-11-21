@@ -172,7 +172,7 @@ export default function TodayIntakeCard({ burned }: { burned: number | null }) {
                   <span className="w-2.5 h-2.5 rounded-full shrink-0" style={{ backgroundColor: colorOf(r.id) }} />
                   <span className="truncate text-[var(--text-secondary)]">{mealName(r)}</span>
                   <span className="ml-auto tabular-nums text-[var(--text-muted)] shrink-0">
-                    {new Date(r.createdAt).toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' })}
+                    {new Date(r.createdAt).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit', hour12: false })}
                   </span>
                   <span className="w-16 text-right tabular-nums font-semibold text-[var(--text-secondary)] shrink-0">
                     {r.calories.toLocaleString()} kcal

@@ -14,11 +14,13 @@ function formatDay(dateStr: string) {
   const yesterday = localDateStr(new Date(Date.now() - 86_400_000))
   if (dateStr === today) return 'Today'
   if (dateStr === yesterday) return 'Yesterday'
-  return new Date(`${dateStr}T00:00:00`).toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' })
+  return new Date(`${dateStr}T00:00:00`).toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' })
 }
 
+// The site is in English: fixed locale, not the browser's (a Chinese browser
+// showed "11月19日周四"). 24-hour times, like the clock on the device.
 function formatTime(iso: string) {
-  return new Date(iso).toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' })
+  return new Date(iso).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit', hour12: false })
 }
 
 // Uploads stored as photo + weight only have no name or calories yet
@@ -386,7 +388,7 @@ export default function FoodLog() {
                   <p className="text-xs text-[var(--text-muted)]">
                     {d.awaitingDevice
                       ? 'Waiting for the device to connect…'
-                      : <><code>{d.keyPrefix}…</code> · {d.lastSeenAt ? `last seen ${new Date(d.lastSeenAt).toLocaleString()}` : 'never used'}</>}
+                      : <><code>{d.keyPrefix}…</code> · {d.lastSeenAt ? `last seen ${new Date(d.lastSeenAt).toLocaleString('en-US', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit', hour12: false })}` : 'never used'}</>}
                   </p>
                 </div>
                 <button type="button" onClick={() => setConfirmRevoke(d)}
