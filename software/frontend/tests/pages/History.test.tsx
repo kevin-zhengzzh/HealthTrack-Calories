@@ -1,4 +1,4 @@
-import { render, screen, waitFor } from '@testing-library/react'
+import { render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import type { CheckIn } from '../../src/types'
@@ -17,7 +17,7 @@ beforeEach(() => {
   getCheckInHistory.mockReset()
 })
 
-describe('History', () => {
+describe('Check-ins tab', () => {
   it('shows an empty state when there are no check-ins', async () => {
     getCheckInHistory.mockResolvedValue([])
     render(<History />)
@@ -25,42 +25,29 @@ describe('History', () => {
     expect(await screen.findByText(/No check-ins yet/)).toBeInTheDocument()
   })
 
-  it('groups check-ins by month and shows a per-month count', async () => {
-    getCheckInHistory.mockResolvedValue(makeCheckIns(['2026-07-01', '2026-07-02', '2026-06-15']))
+  it('groups check-ins by month, newest first, with a count per month', async () => {
+    getCheckInHistory.mockResolvedValue(makeCheckIns(['2026-06-15', '2026-07-01', '2026-07-02']))
     render(<History />)
 
-    expect(await screen.findByText('July 2026')).toBeInTheDocument()
-    expect(screen.getByText('June 2026')).toBeInTheDocument()
-    expect(screen.getByText('2 check-ins this month')).toBeInTheDocument()
-    expect(screen.getByText('1 check-in this month')).toBeInTheDocument()
+    const headings = await screen.findAllByRole('heading', { level: 2 })
+    expect(headings.map((h) => h.textContent)).toEqual(['July 2026', 'June 2026'])
+    expect(screen.getByText('2 check-ins')).toBeInTheDocument()
+    expect(screen.getByText('1 check-in')).toBeInTheDocument()
   })
 
-  it('paginates at the default page size of 10 and advances via Next', async () => {
-    const dates = Array.from({ length: 15 }, (_, i) => `2026-07-${String(i + 1).padStart(2, '0')}`)
+  it('shows 10 months at first and older ones on request', async () => {
+    const dates = Array.from({ length: 12 }, (_, i) => `2025-${String(i + 1).padStart(2, '0')}-10`)
     getCheckInHistory.mockResolvedValue(makeCheckIns(dates))
     const user = userEvent.setup()
     render(<History />)
 
-    expect(await screen.findByText('10 check-ins this month')).toBeInTheDocument()
-    expect(screen.getByRole('spinbutton')).toHaveValue(1)
+    expect(await screen.findAllByRole('heading', { level: 2 })).toHaveLength(10)
+    expect(screen.queryByText('January 2025')).not.toBeInTheDocument()
 
-    await user.click(screen.getByRole('button', { name: 'Next' }))
+    await user.click(screen.getByRole('button', { name: /Show older months \(2 more\)/ }))
 
-    await waitFor(() => expect(screen.getByText('5 check-ins this month')).toBeInTheDocument())
-  })
-
-  it('changing the page size resets back to page 1', async () => {
-    const dates = Array.from({ length: 12 }, (_, i) => `2026-07-${String(i + 1).padStart(2, '0')}`)
-    getCheckInHistory.mockResolvedValue(makeCheckIns(dates))
-    const user = userEvent.setup()
-    render(<History />)
-
-    await screen.findByText('10 check-ins this month')
-    await user.click(screen.getByRole('button', { name: 'Next' }))
-    await waitFor(() => expect(screen.getByText('2 check-ins this month')).toBeInTheDocument())
-
-    await user.click(screen.getByRole('button', { name: '5' }))
-
-    await waitFor(() => expect(screen.getByText('5 check-ins this month')).toBeInTheDocument())
+    expect(screen.getAllByRole('heading', { level: 2 })).toHaveLength(12)
+    expect(screen.getByText('January 2025')).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: /Show older/ })).not.toBeInTheDocument()
   })
 })

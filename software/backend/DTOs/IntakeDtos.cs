@@ -35,6 +35,11 @@ public record IntakeRecordDto(
 
 public record UpdateIntakeRequest(string FoodName, double WeightGrams, double CaloriesPer100g);
 
+// GET /api/intake/stats: one row per day that has meals, and the top foods
+public record IntakeDayDto(DateOnly Date, int Calories, int Meals);
+public record IntakeFoodDto(string Name, int Calories, int Count);
+public record IntakeStatsDto(List<IntakeDayDto> Days, List<IntakeFoodDto> Foods);
+
 // Kept small and flat: it is parsed on a microcontroller and shown on a 320x240 screen
 // DailyGoal: the user's daily intake goal (null = not set), for the ring on the device
 // Today's meals for the list on the device. CreatedAtUnix: seconds since the

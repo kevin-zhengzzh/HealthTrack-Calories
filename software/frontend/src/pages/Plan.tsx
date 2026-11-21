@@ -202,9 +202,9 @@ function ProfileCard({ profile }: { profile: Profile }) {
       <CardTitle
         dot="var(--text-muted)"
         title="About you"
-        tip={<>Used only to estimate how much energy your body uses in a day (maintenance), for the projection. Everything is optional and only visible to you.</>}
+        tip={<>Used only to estimate how much energy your body uses in a day (base burn), for the Dashboard's Burned and Net and for the projection. Everything is optional and only visible to you.</>}
       >
-        Lets the projection work out your maintenance calories. All optional.
+        Works out your daily base burn for the Dashboard and the projection. All optional.
       </CardTitle>
 
       <form
@@ -264,11 +264,11 @@ function ProfileCard({ profile }: { profile: Profile }) {
         {isComplete(profile) && (
           <div className="rounded-lg bg-[var(--bg-inset)] px-3 py-2 text-sm text-[var(--text-secondary)] flex items-center justify-between gap-2">
             <span className="flex items-center gap-2">
-              Maintenance
-              <InfoTip label="About maintenance" align="left">
+              Base burn (maintenance)
+              <InfoTip label="About base burn" align="left">
                 Roughly what your body uses in a day <b>without</b> workouts: BMR from the Mifflin-St Jeor formula
                 (sex, age, height, weight) × your everyday activity. Eat this much and do no workouts, and your weight
-                stays about the same.
+                stays about the same. The Dashboard adds it to each day's Burned and Net.
               </InfoTip>
             </span>
             <span className="tabular-nums font-semibold">≈ {Math.round(maintenance(profile)).toLocaleString()} kcal/day</span>

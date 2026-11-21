@@ -176,7 +176,7 @@ export default function ChatWidget() {
         onClick={() => setOpen(true)}
         aria-label="Open AI assistant"
         title="Ask the AI assistant"
-        className="fixed bottom-42 right-4 sm:right-16 w-12 h-12 flex items-center justify-center text-white rounded-full shadow-lg transition-transform active:scale-95 cursor-pointer z-30"
+        className="fixed bottom-42 right-4 w-12 h-12 flex items-center justify-center text-white rounded-full shadow-lg transition-transform active:scale-95 cursor-pointer z-30"
         style={{ backgroundColor: 'var(--primary)' }}
         onMouseEnter={(e) => (e.currentTarget.style.backgroundColor = 'var(--primary-hover)')}
         onMouseLeave={(e) => (e.currentTarget.style.backgroundColor = 'var(--primary)')}

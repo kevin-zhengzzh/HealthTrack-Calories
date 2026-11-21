@@ -274,17 +274,83 @@ public class IntakeController : ControllerBase
         return File(image.ImageData!, image.ImageContentType ?? "image/jpeg");
     }
 
+    // Same rules for a manual entry and for a correction
+    private static string? Validate(UpdateIntakeRequest req, out string name)
+    {
+        name = req.FoodName?.Trim() ?? string.Empty;
+        if (name.Length is 0 or > MaxFoodNameLength)
+            return $"Food name must be 1–{MaxFoodNameLength} characters.";
+        if (!double.IsFinite(req.WeightGrams) || req.WeightGrams < 1 || req.WeightGrams > MaxWeightGrams)
+            return $"Weight must be between 1 and {MaxWeightGrams} grams.";
+        if (!double.IsFinite(req.CaloriesPer100g) || req.CaloriesPer100g < 0 || req.CaloriesPer100g > 900)
+            return "Calories per 100g must be between 0 and 900.";
+        return null;
+    }
+
+    private static IntakeRecordDto ToDto(IntakeRecord r) =>
+        new(r.Id, r.FoodName, r.WeightGrams, r.CaloriesPer100g, r.Calories, r.Confidence, r.Corrected,
+            r.ImageData != null, r.Date, r.CreatedAt);
+
+    // A meal typed in on the website, without the scale (no photo, no model)
+    [HttpPost]
+    public async Task<IActionResult> Create(UpdateIntakeRequest req, [FromQuery] string? localDate = null)
+    {
+        if (Validate(req, out var name) is { } error) return BadRequest(new { message = error });
+
+        var weight = Math.Round(req.WeightGrams, 1);
+        var density = Math.Round(req.CaloriesPer100g, 1);
+        var record = new IntakeRecord
+        {
+            UserId = UserId,
+            FoodName = name,
+            WeightGrams = weight,
+            CaloriesPer100g = density,
+            Calories = IntakeRecord.ComputeCalories(weight, density),
+            Confidence = IntakeRecord.ManualConfidence,
+            Date = CheckInController.ResolveToday(localDate),
+            CreatedAt = DateTime.UtcNow,
+        };
+        _db.IntakeRecords.Add(record);
+        await _db.SaveChangesAsync();
+        return Ok(ToDto(record));
+    }
+
+    // Per-day totals and the top foods over a date range, for the Statistics
+    // page (the plain history is capped, a year of meals is not)
+    internal const int MaxStatsDays = 366;
+    internal const int TopFoods = 10;
+
+    [HttpGet("stats")]
+    public async Task<IActionResult> Stats([FromQuery] DateOnly from, [FromQuery] DateOnly to)
+    {
+        if (to < from || to.DayNumber - from.DayNumber >= MaxStatsDays)
+            return BadRequest(new { message = $"Pick a range of 1–{MaxStatsDays} days." });
+
+        var rows = await _db.IntakeRecords
+            .Where(r => r.UserId == UserId && r.Date >= from && r.Date <= to)
+            .Select(r => new { r.Date, r.FoodName, r.Calories })
+            .ToListAsync();
+
+        var days = rows.GroupBy(r => r.Date)
+            .OrderBy(g => g.Key)
+            .Select(g => new IntakeDayDto(g.Key, g.Sum(r => r.Calories), g.Count()))
+            .ToList();
+        // Unnamed uploads (no recognition) have no calories to rank yet
+        var foods = rows.Where(r => r.FoodName != string.Empty)
+            .GroupBy(r => r.FoodName.Trim().ToLowerInvariant())
+            // Shown with its latest spelling ("rice" then "Rice" → "Rice")
+            .Select(g => new IntakeFoodDto(g.MaxBy(r => r.Date)!.FoodName.Trim(), g.Sum(r => r.Calories), g.Count()))
+            .OrderByDescending(f => f.Calories).ThenByDescending(f => f.Count)
+            .Take(TopFoods)
+            .ToList();
+        return Ok(new IntakeStatsDto(days, foods));
+    }
+
     // The model can be wrong: let users fix the name, calorie density or weight
     [HttpPut("{id}")]
     public async Task<IActionResult> Update(int id, UpdateIntakeRequest req)
     {
-        var name = req.FoodName?.Trim() ?? string.Empty;
-        if (name.Length is 0 or > MaxFoodNameLength)
-            return BadRequest(new { message = $"Food name must be 1–{MaxFoodNameLength} characters." });
-        if (!double.IsFinite(req.WeightGrams) || req.WeightGrams < 1 || req.WeightGrams > MaxWeightGrams)
-            return BadRequest(new { message = $"Weight must be between 1 and {MaxWeightGrams} grams." });
-        if (!double.IsFinite(req.CaloriesPer100g) || req.CaloriesPer100g < 0 || req.CaloriesPer100g > 900)
-            return BadRequest(new { message = "Calories per 100g must be between 0 and 900." });
+        if (Validate(req, out var name) is { } error) return BadRequest(new { message = error });
 
         var record = await _db.IntakeRecords.FirstOrDefaultAsync(r => r.Id == id && r.UserId == UserId);
         if (record is null) return NotFound();

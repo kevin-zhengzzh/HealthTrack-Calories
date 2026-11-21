@@ -182,6 +182,11 @@ export interface IntakeRecord {
   createdAt: string
 }
 
+export interface IntakeStats {
+  days: { date: string; calories: number; meals: number }[] // only days with meals
+  foods: { name: string; calories: number; count: number }[] // top 10 by calories
+}
+
 export interface Device {
   id: number
   name: string
