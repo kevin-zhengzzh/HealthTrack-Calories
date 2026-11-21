@@ -209,7 +209,7 @@ Phase 2 的 `msa-backend` / `msa-frontend` 和它的 `neondb` 库**保持不动*
 - **左右一致**：两张目标卡片结构完全相同，都有 Clear。`Users.WeeklyCalorieGoal` 改为可空（新账号仍默认 2,000/周）；AI 工具 `get_weekly_goal_progress` 在未设目标时返回 `goal: null` 和说明（不再当作"用户不存在"），周总结的 `goalPercent` 为 null；每周目标圆环显示 "—" 和"set a goal"链接，首页消耗卡片显示"No burn goal yet"。
 - **身体数据**（可选，`PUT /api/user/profile`）：性别、出生年份、身高、体重、日常活动量，存在 Users 上；`/user/me` 返回 `profile`。限制见 `Models/BodyProfile.cs`。
 - **维持热量** = Mifflin-St Jeor BMR × 日常活动系数（1.2 / 1.3 / 1.45 / 1.6）。系数描述的是**不含已记录运动**的日常活动——运动通过消耗目标单独加上，避免重复计算。
-- **一年预测**（前端 `src/projection.ts`，有单元测试）：每天 余量 = 摄入目标 −（当日体重下的维持热量 + 每日消耗目标），7,700 kcal ≈ 1 kg，按新体重每天重新算维持热量（曲线会逐渐变平）。显示 12 个月曲线、一年后体重、"吃 − 维持 − 运动 = 每天余量"的分解；第一个月每周减重超过体重 1%、摄入低于 1,200（女）/1,500（男）、终点 BMI < 18.5 时给出琥珀色提醒；注明是粗略估计、非医疗建议。缺目标或身体数据时列出还缺什么。
+- **一年预测**（前端 `src/projection.ts`，有单元测试；体重最低算到 BMI 13，触底时标题显示 "Dangerously low" 并用红色警示，不再出现负体重）：每天 余量 = 摄入目标 −（当日体重下的维持热量 + 每日消耗目标），7,700 kcal ≈ 1 kg，按新体重每天重新算维持热量（曲线会逐渐变平）。显示 12 个月曲线、一年后体重、"吃 − 维持 − 运动 = 每天余量"的分解；第一个月每周减重超过体重 1%、摄入低于 1,200（女）/1,500（男）、终点 BMI < 18.5 时给出琥珀色提醒；注明是粗略估计、非医疗建议。缺目标或身体数据时列出还缺什么。
 - **问号提示** `InfoTip`：全站统一的一个 "?"：悬停显示；点击（手机上点按）固定打开，点别处或按 Esc 关闭，所以里面的链接能点（例如 Points 说明里的 Store）。气泡放在贴着 "?" 的带内边距容器里，鼠标从 "?" 移到气泡上不会消失。用在首页 Points（原来的弹窗已删除）、Net，Plan 各卡片标题、日常活动量、维持热量。
 - **迁移** `BurnGoalOptionalAndBodyProfile`；回滚时先把空的消耗目标填回 2,000。
 
@@ -217,6 +217,11 @@ Phase 2 的 `msa-backend` / `msa-frontend` 和它的 `neondb` 库**保持不动*
 - **决定**：侧边栏只剩 Dashboard / Statistics / Plan / **History**。History 页标题右侧是三个标签 **Food Log | Workouts | Check-ins**（默认 Food Log），每个标签有自己的地址：`/history/food`、`/history/workouts`、`/history/check-ins`（嵌套路由 + `<Outlet>`，`/history` 跳到 food）。旧地址 `/food-log`、`/record-history` 重定向到对应标签。三个原页面去掉各自的 h1，组件本身不变（设备管理仍在 Food Log 标签里）。
 - **原因**：三个都是"看记录"，放在一起侧边栏更短（手机上一行放得下）；独立地址让返回键、收藏和首页的 "Food Log →" 链接都还能用。
 - **实现**：`App.tsx` 用 `isDashboardSection(path)` 判断是否显示侧边栏（`/history/*` 前缀匹配），不再是固定列表。
+
+### D-28 页面滚动条改用应用内的浮动滚动条（2026-11-21）
+- **决定**：隐藏浏览器自带的页面滚动条（`index.css` 里 `html { scrollbar-width: none }` + `::-webkit-scrollbar`），改用 `OverlayScrollbar`（在 `App` 里挂一次）：叠在内容上、不占宽度；滚轮、触摸滑动、键盘滚动或鼠标靠近右边缘时浮现，约 1 秒后淡出，悬停时变粗，可拖动；页面不需要滚动时不显示。页面内部的滚动区域（列表、聊天）用同色的细滚动条。
+- **原因**：自带滚动条只在长页面出现并占掉十几像素，导致长页和短页的内容左右错位（例如 Plan 和 Check-ins）。
+- **实现要点**：用 `ResizeObserver` 盯 body 尺寸、`MutationObserver` 盯 body 的 style（弹窗锁定滚动时 `overflow: hidden`，此时隐藏）；拖动按比例换算成 `scrollTo`。
 
 ### D-14 部署工作流暂时只能手动触发（2026-11-18；2026-11-19 已恢复自动部署）
 - **决定**：`deploy.yml` 只保留 `workflow_dispatch`。
@@ -251,6 +256,7 @@ Phase 2 的 `msa-backend` / `msa-frontend` 和它的 `neondb` 库**保持不动*
 | 2026-11-20 | Today 页行展开（同 Wi-Fi 列表）、最新在上、打开时每 10 秒刷新、3 分钟无操作自动关闭 —— PR #7 合并部署（`d290b1c`） |
 | 2026-11-20 | 真机实拍真实食物（番茄、炒肉、炒饭、烤串、火龙果）已能识别入库，kcal/100g 合理 |
 | 2026-11-21 | Dashboard 净热量（D-23）；串口日志过滤脚本 `tools/serial_log.py` |
+| 2026-11-21 | 浮动滚动条（D-28）：长短页面宽度一致；预测加 BMI 13 下限（极端输入不再算出负体重）、纵轴不低于 0、算式不折行 |
 | 2026-11-21 | 首页顶部：去掉标题，签到卡片和 Points / Streak 一行；问号提示统一为 `InfoTip`（悬停 + 点击固定），Points 说明从弹窗改为提示 |
 | 2026-11-21 | History 页：Food Log / Workouts / Check-ins 三个标签（D-27），旧地址重定向；本地截图确认跳转和手机布局 |
 | 2026-11-21 | Net 问号提示；Plan 页左右一致（消耗目标可清除）、身体数据、一年体重预测（D-26，迁移 `BurnGoalOptionalAndBodyProfile`，后端 153 / 前端 47 个测试） |

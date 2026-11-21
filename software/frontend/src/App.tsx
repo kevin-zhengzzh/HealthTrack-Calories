@@ -9,6 +9,7 @@ import DailyTasksMenu from './components/DailyTasksMenu'
 import StoreModal from './components/StoreModal'
 import PointsHistoryModal from './components/PointsHistoryModal'
 import ToastContainer from './components/ToastContainer'
+import OverlayScrollbar from './components/OverlayScrollbar'
 import ChatWidget from './components/ChatWidget'
 import Dashboard from './pages/Dashboard'
 import Login from './pages/Login'
@@ -242,6 +243,7 @@ export default function App() {
   return (
     <BrowserRouter>
       <ToastContainer />
+      <OverlayScrollbar />
       <Routes>
         <Route path="/login" element={token ? <Navigate to="/" replace /> : <Login />} />
         <Route path="/register" element={token ? <Navigate to="/" replace /> : <Register />} />
