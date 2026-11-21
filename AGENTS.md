@@ -297,6 +297,7 @@ Phase 2 的 `msa-backend` / `msa-frontend` 和它的 `neondb` 库**保持不动*
 | 2026-11-22 | 首页 Burned / Net 计入基础消耗（D-29）；本地截图检查了三种情况（有身体数据 ± 运动、无身体数据）和手机布局 |
 | 2026-11-22 | Device 页、手动记一餐、+ 菜单（D-30）；History 统一样式（D-31）；首页 Today / This week（D-32）；Statistics 周/月/年重做（D-33）。后端 159 / 前端 54 个测试，本地 Playwright 截图检查了宽屏和手机 |
 | 2026-11-22 | AI 助手：Set my plan（提案 + Apply 卡片，D-34）；后端 164 / 前端 56 个测试；本地用真实模型端到端验证 |
+| 2026-11-22 | PR #10（History 标签、浮动滚动条）、#11（基础消耗、Statistics、Device 页、History 统一样式、Points 标签）、#12（AI Set my plan）合并，均自动部署成功（最新 `b2fa03c`）。存档：待办新增 4 项（Statistics 下两块挪走、+ 按钮悬停横向展开、Add meal 说明和设备入口、免责说明），下次从这里开始 |
 | 2026-11-21 | 统计/首页改版三步计划的第 1 步：Plan 页 + 目标按周存储（D-24，迁移 `WeeklyIntakeGoal`，共 141 个测试）。第 2 步首页改版、第 3 步统计页（Intake/Burned 切换，自然周/月/年可往回翻，日均只算有记录的天，排行榜） |
 
 ---
