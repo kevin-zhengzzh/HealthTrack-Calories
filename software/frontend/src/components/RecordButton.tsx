@@ -4,8 +4,8 @@ import { useStore } from '../store'
 import { WORKOUT_TYPES } from '../types'
 import { useLockBodyScroll } from '../hooks/useLockBodyScroll'
 
-// Floating "+ Record" button + modal, shared across Dashboard/Check-in
-// History/Record History so a workout can be logged from any of them.
+// Floating "+ Record" button + modal, shared across the Dashboard, Statistics, Plan and
+// History pages so a workout can be logged from any of them.
 // Recording bumps workoutRefreshKey in the store so each page's own
 // workout list (fetched independently) knows to refetch.
 export default function RecordButton() {

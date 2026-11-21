@@ -261,8 +261,6 @@ export default function FoodLog() {
 
   return (
     <div className="flex flex-col gap-6">
-      <h1 className="text-3xl font-bold text-[var(--text-primary)]">Food Log</h1>
-
       <section className="bg-[var(--bg-surface)] rounded-2xl shadow p-5 flex flex-col gap-3">
         <div className="flex items-end justify-between gap-4">
           <div>

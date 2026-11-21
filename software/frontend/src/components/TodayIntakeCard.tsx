@@ -12,7 +12,7 @@ export default function TodayIntakeCard({ records }: { records: IntakeRecord[] |
     <TodayCard
       title="Today's intake"
       headerAction={
-        <Link to="/food-log" className="text-sm font-medium hover:underline" style={{ color: 'var(--primary)' }}>
+        <Link to="/history/food" className="text-sm font-medium hover:underline" style={{ color: 'var(--primary)' }}>
           Food Log →
         </Link>
       }

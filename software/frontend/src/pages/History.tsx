@@ -41,8 +41,6 @@ export default function History() {
 
   return (
     <div className="flex flex-col gap-6">
-      <h1 className="text-3xl font-bold text-[var(--text-primary)]">Check-in History</h1>
-
       {initialLoading ? (
         <div className="bg-[var(--bg-surface)] rounded-2xl shadow p-5 flex flex-col gap-3">
           <div className="h-4 w-32 rounded bg-[var(--bg-inset)] animate-pulse" />

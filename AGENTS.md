@@ -212,6 +212,11 @@ Phase 2 的 `msa-backend` / `msa-frontend` 和它的 `neondb` 库**保持不动*
 - **问号提示** `InfoTip`：悬停/聚焦显示解释，用在首页 Net、Plan 各卡片标题、日常活动量、维持热量。
 - **迁移** `BurnGoalOptionalAndBodyProfile`；回滚时先把空的消耗目标填回 2,000。
 
+### D-27 Food Log / 运动记录 / 签到记录合并成一个 History 页，用标签切换（2026-11-21）
+- **决定**：侧边栏只剩 Dashboard / Statistics / Plan / **History**。History 页标题右侧是三个标签 **Food Log | Workouts | Check-ins**（默认 Food Log），每个标签有自己的地址：`/history/food`、`/history/workouts`、`/history/check-ins`（嵌套路由 + `<Outlet>`，`/history` 跳到 food）。旧地址 `/food-log`、`/record-history` 重定向到对应标签。三个原页面去掉各自的 h1，组件本身不变（设备管理仍在 Food Log 标签里）。
+- **原因**：三个都是"看记录"，放在一起侧边栏更短（手机上一行放得下）；独立地址让返回键、收藏和首页的 "Food Log →" 链接都还能用。
+- **实现**：`App.tsx` 用 `isDashboardSection(path)` 判断是否显示侧边栏（`/history/*` 前缀匹配），不再是固定列表。
+
 ### D-14 部署工作流暂时只能手动触发（2026-11-18；2026-11-19 已恢复自动部署）
 - **决定**：`deploy.yml` 只保留 `workflow_dispatch`。
 - **原因**：最初镜像名和应用名都指向 Phase 2，自动部署会覆盖线上服务。现在已改为 `healthtrack-*`，并且首次部署已成功。
@@ -245,6 +250,7 @@ Phase 2 的 `msa-backend` / `msa-frontend` 和它的 `neondb` 库**保持不动*
 | 2026-11-20 | Today 页行展开（同 Wi-Fi 列表）、最新在上、打开时每 10 秒刷新、3 分钟无操作自动关闭 —— PR #7 合并部署（`d290b1c`） |
 | 2026-11-20 | 真机实拍真实食物（番茄、炒肉、炒饭、烤串、火龙果）已能识别入库，kcal/100g 合理 |
 | 2026-11-21 | Dashboard 净热量（D-23）；串口日志过滤脚本 `tools/serial_log.py` |
+| 2026-11-21 | History 页：Food Log / Workouts / Check-ins 三个标签（D-27），旧地址重定向；本地截图确认跳转和手机布局 |
 | 2026-11-21 | Net 问号提示；Plan 页左右一致（消耗目标可清除）、身体数据、一年体重预测（D-26，迁移 `BurnGoalOptionalAndBodyProfile`，后端 153 / 前端 47 个测试） |
 | 2026-11-21 | 第 2 步：Dashboard 只看今天（D-25）：净热量横幅、今日摄入/消耗对称圆环卡片、横向签到卡片；临时 Statistics 页放原来的图表；本地 Playwright 截图检查了桌面和手机布局 |
 | 2026-11-21 | 统计/首页改版三步计划的第 1 步：Plan 页 + 目标按周存储（D-24，迁移 `WeeklyIntakeGoal`，共 141 个测试）。第 2 步首页改版、第 3 步统计页（Intake/Burned 切换，自然周/月/年可往回翻，日均只算有记录的天，排行榜） |
@@ -279,7 +285,7 @@ Phase 2 的 `msa-backend` / `msa-frontend` 和它的 `neondb` 库**保持不动*
 - **页面宽度按路由写死在 `App.tsx`**：只有 `isWide` 的路由用 `lg:max-w-5xl`，其他是 `lg:max-w-2xl`。新页面放宽屏内容时要加进 `isWide`（Statistics 一开始只有 672px 宽）。
 - **看前端效果**：本机有 Playwright + Edge（`p.chromium.launch(channel='msedge')`）。本地后端 `:5000` + `npx vite`，注册临时账号、`localStorage` 写 `token/userId/username` 后截图；用完删掉临时账号和它的记录（`IntakeRecords`、`WorkoutRecords`、`Users`）。
 - **PowerShell 5.1 会吞掉传给原生程序的双引号**：`psql -c 'DELETE FROM "Users" …'` 到了 psql 那里变成 `DELETE FROM Users`（表名被转小写，报"关系不存在"）。带引号的 SQL 用 Bash 跑。
-- **停掉后台的 `npx vite` 任务不一定会结束 node 子进程**：下次 `--strictPort` 会报端口被占用（旧进程还在用磁盘上的新代码提供页面）。用 `Get-NetTCPConnection -LocalPort 5173` 找到 PID，确认命令行是本仓库的 vite 后再停。
+- **停掉后台的 `npx vite` 任务不会结束 node 子进程**（两次都留下了）：下次 `--strictPort` 会报端口被占用（旧进程还在用磁盘上的新代码提供页面）。用 `Get-NetTCPConnection -LocalPort 5173` 找到 PID，确认命令行是本仓库的 vite 后再停。
 - **EF Core 的 `ExecuteDeleteAsync`** 内存测试库不支持；需要在测试里跑到的代码改用加载后 `RemoveRange`。
 
 ---

@@ -17,13 +17,16 @@ import History from './pages/History'
 import RecordHistory from './pages/RecordHistory'
 import Rank from './pages/Rank'
 import FoodLog from './pages/FoodLog'
+import Records from './pages/Records'
 import Plan from './pages/Plan'
 import Statistics from './pages/Statistics'
 import Landing from './pages/Landing'
 
-// Home / Check-in History / Record History / Food Log share the sidebar and are
+// Home / Statistics / Plan / History (Food Log, Workouts, Check-ins tabs) share the sidebar and are
 // treated as one "Dashboard" section in the header nav's active state
-const DASHBOARD_SECTION_PATHS = ['/', '/statistics', '/plan', '/history', '/record-history', '/food-log']
+const DASHBOARD_SECTION_PATHS = ['/', '/statistics', '/plan']
+// Pages with the sidebar: the ones above plus every History tab (/history/…)
+const isDashboardSection = (p: string) => DASHBOARD_SECTION_PATHS.includes(p) || p === '/history' || p.startsWith('/history/')
 
 function HomeIcon({ className }: { className?: string }) {
   return (
@@ -48,7 +51,7 @@ function RankIcon({ className }: { className?: string }) {
 
 // The two top-level sections shown as a sliding-rail switcher in the header
 const NAV_TABS = [
-  { to: '/', label: 'Home', icon: HomeIcon, isActive: (p: string) => DASHBOARD_SECTION_PATHS.includes(p) },
+  { to: '/', label: 'Home', icon: HomeIcon, isActive: isDashboardSection },
   { to: '/rank', label: 'Rank', icon: RankIcon, isActive: (p: string) => p === '/rank' },
 ]
 
@@ -181,7 +184,7 @@ function PrivateLayout() {
   // every other private path still bounces straight to /login as before.
   if (!token) return location.pathname === '/' ? <Landing /> : <Navigate to="/login" replace />
 
-  const showSidebar = DASHBOARD_SECTION_PATHS.includes(location.pathname)
+  const showSidebar = isDashboardSection(location.pathname)
   // Rank has its own internal sidebar (ranking categories, not routes) — it
   // needs the wider Dashboard-style width, and to hug the left edge the
   // same way, instead of the narrow centered list pages
@@ -197,7 +200,7 @@ function PrivateLayout() {
           {showSidebar && <Sidebar />}
           {showSidebar && <RecordButton />}
           {/* Content hugs the sidebar (no auto-margin) when one is showing —
-              mx-auto only re-centers it on sidebar-less pages like History/Record History.
+              mx-auto only re-centers it on sidebar-less pages.
               Only applies at lg+, where the sidebar sits beside the content instead of above it. */}
           {/* Rank has its own internal side columns (RankSidebar +
               StreakTracker, 224px + 192px + two 40px gaps = 496px) eating
@@ -206,9 +209,15 @@ function PrivateLayout() {
           <main className={`flex-1 min-w-0 ${hugLeft ? '' : 'lg:mx-auto'} ${isWide ? 'lg:max-w-5xl' : isRank ? 'lg:max-w-[73rem]' : 'lg:max-w-2xl'}`}>
             <Routes>
               <Route path="/" element={<Dashboard />} />
-              <Route path="/history" element={<History />} />
-              <Route path="/record-history" element={<RecordHistory />} />
-              <Route path="/food-log" element={<FoodLog />} />
+              <Route path="/history" element={<Records />}>
+                <Route index element={<Navigate to="food" replace />} />
+                <Route path="food" element={<FoodLog />} />
+                <Route path="workouts" element={<RecordHistory />} />
+                <Route path="check-ins" element={<History />} />
+              </Route>
+              {/* Old addresses, before the three pages became History tabs */}
+              <Route path="/food-log" element={<Navigate to="/history/food" replace />} />
+              <Route path="/record-history" element={<Navigate to="/history/workouts" replace />} />
               <Route path="/plan" element={<Plan />} />
               <Route path="/statistics" element={<Statistics />} />
               {/* Keyed by location.key so clicking the header's Rank tab while

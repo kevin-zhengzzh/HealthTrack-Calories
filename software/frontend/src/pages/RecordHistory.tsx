@@ -136,8 +136,6 @@ export default function RecordHistory() {
 
   return (
     <div className="flex flex-col gap-6">
-      <h1 className="text-3xl font-bold text-[var(--text-primary)]">Record History</h1>
-
       {!initialLoading && history.length > 0 && (
         <input
           type="text"
