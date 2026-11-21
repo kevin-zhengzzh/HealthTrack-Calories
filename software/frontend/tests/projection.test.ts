@@ -43,6 +43,15 @@ describe('one-year projection', () => {
     expect(project(her, m + 300, 0, 365, YEAR).endKg).toBeGreaterThan(60)
   })
 
+  it('never goes below a life-threatening weight, and says so', () => {
+    const tiny: CompleteProfile = { sex: 'male', birthYear: 1926, heightCm: 100.1, weightKg: 25.1, activityLevel: 'light' }
+    const p = project(tiny, 4, 286, 365, YEAR)
+    expect(p.hitFloor).toBe(true)
+    expect(p.floorKg).toBeCloseTo(13 * 1.001 ** 2)
+    expect(Math.min(...p.months.map((m) => m.weightKg))).toBeGreaterThanOrEqual(p.floorKg)
+    expect(project(him, 2000, 300, 365, YEAR).hitFloor).toBe(false)
+  })
+
   it('gives 13 monthly points from today to month 12', () => {
     const p = project(her, 1800, 200, 365, YEAR)
     expect(p.months.map((m) => m.month)).toEqual([0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12])

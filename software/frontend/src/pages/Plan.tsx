@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from 'react'
 import { updateProfile } from '../api'
 import InfoTip from '../components/InfoTip'
 import { INTAKE_COLOR, MAX_GOAL_PER_DAY, MAX_GOAL_PER_WEEK, perDay, useGoals, type Goal } from '../goals'
-import { ACTIVITY, isComplete, maintenance, missingProfileFields, project } from '../projection'
+import { ACTIVITY, FLOOR_BMI, isComplete, maintenance, missingProfileFields, project } from '../projection'
 import { useStore } from '../store'
 import type { ActivityLevel, GoalKind, Profile } from '../types'
 
@@ -345,18 +345,29 @@ function ProjectionBody({ result, intake, burn, profile }: {
   return (
     <div className="flex flex-col gap-4">
       <WeightChart months={result.months} />
-      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-sm">
+      <div className="grid grid-cols-1 gap-3 text-sm">
         <div>
           <p className="text-xs uppercase tracking-wide text-[var(--text-muted)]">In a year</p>
-          <p className="text-2xl font-bold text-[var(--text-primary)] tabular-nums">
-            {fmtKg(result.endKg)}{' '}
-            <span className={`text-base font-semibold ${change < 0 ? 'text-green-600' : change > 0 ? 'text-amber-600' : 'text-[var(--text-muted)]'}`}>
-              ({signed(change)} kg)
-            </span>
-          </p>
+          {result.hitFloor ? (
+            <p className="text-2xl font-bold text-red-600">Dangerously low</p>
+          ) : (
+            <p className="text-2xl font-bold text-[var(--text-primary)] tabular-nums">
+              {fmtKg(result.endKg)}{' '}
+              <span className={`text-base font-semibold ${change < 0 ? 'text-green-600' : change > 0 ? 'text-amber-600' : 'text-[var(--text-muted)]'}`}>
+                ({signed(change)} kg)
+              </span>
+            </p>
+          )}
           <p className="text-[var(--text-muted)]">from {fmtKg(result.startKg)} today</p>
         </div>
-        <div className="rounded-lg bg-[var(--bg-inset)] px-3 py-2 tabular-nums text-[var(--text-secondary)] flex flex-col gap-0.5">
+        {result.hitFloor && (
+          <div className="rounded-lg bg-red-50 text-red-800 px-3 py-2 text-xs leading-relaxed">
+            This plan would take you below a life-threatening weight (BMI {FLOOR_BMI}, about {fmtKg(result.floorKg)}), so the
+            projection stops there. Please don't follow it — check the goals and your details, and talk to a doctor before
+            eating this little.
+          </div>
+        )}
+        <div className="rounded-lg bg-[var(--bg-inset)] px-3 py-2 tabular-nums whitespace-nowrap text-[var(--text-secondary)] flex flex-col gap-0.5">
           <span className="flex justify-between"><span>Eat</span><span>{intake.perDay.toLocaleString()}</span></span>
           <span className="flex justify-between"><span>− Maintenance</span><span>{Math.round(result.maintenance).toLocaleString()}</span></span>
           <span className="flex justify-between"><span>− Workouts</span><span>{(burn?.perDay ?? 0).toLocaleString()}</span></span>
@@ -365,13 +376,13 @@ function ProjectionBody({ result, intake, burn, profile }: {
           </span>
         </div>
         {(steepLoss || lowIntake || (endBmi !== null && endBmi < 18.5)) && (
-          <div className="sm:col-span-2 rounded-lg bg-amber-50 text-amber-800 px-3 py-2 text-xs leading-relaxed">
+          <div className="rounded-lg bg-amber-50 text-amber-800 px-3 py-2 text-xs leading-relaxed">
             {steepLoss && <p>That's more than about 1% of your body weight a week at first — hard to keep up and not generally recommended.</p>}
             {lowIntake && <p>{intake.perDay.toLocaleString()} kcal a day is below the usual minimum of {profile.sex === 'male' ? '1,500' : '1,200'} without medical supervision.</p>}
-            {endBmi !== null && endBmi < 18.5 && <p>The end weight would be underweight (BMI {endBmi.toFixed(1)}).</p>}
+            {endBmi !== null && endBmi < 18.5 && !result.hitFloor && <p>The end weight would be underweight (BMI {endBmi.toFixed(1)}).</p>}
           </div>
         )}
-        <p className="sm:col-span-2 text-xs text-[var(--text-muted)]">A rough estimate; real bodies vary. Not medical advice.</p>
+        <p className="text-xs text-[var(--text-muted)]">A rough estimate; real bodies vary. Not medical advice.</p>
       </div>
     </div>
   )
@@ -384,7 +395,7 @@ function WeightChart({ months }: { months: { month: number; weightKg: number }[]
   const values = months.map((m) => m.weightKg)
   const lo = Math.min(...values), hi = Math.max(...values)
   const pad = Math.max(1, (hi - lo) * 0.15)
-  const yMin = Math.floor(lo - pad), yMax = Math.ceil(hi + pad)
+  const yMin = Math.max(0, Math.floor(lo - pad)), yMax = Math.ceil(hi + pad)
   const x = (i: number) => PAD.left + (i / 12) * (W - PAD.left - PAD.right)
   const y = (kg: number) => PAD.top + (1 - (kg - yMin) / (yMax - yMin)) * (H - PAD.top - PAD.bottom)
   const line = months.map((m, i) => `${i ? 'L' : 'M'}${x(i)},${y(m.weightKg)}`).join(' ')

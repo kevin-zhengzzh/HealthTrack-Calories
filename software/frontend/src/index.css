@@ -88,6 +88,35 @@ body {
   background-color: var(--bg-page);
 }
 
+/* The page scrollbar is our own floating one (OverlayScrollbar): the
+   browser's takes up width only on pages long enough to scroll, so short and
+   long pages were laid out at different widths. */
+html {
+  scrollbar-width: none;
+}
+html::-webkit-scrollbar,
+body::-webkit-scrollbar {
+  display: none;
+}
+
+/* Scrolling areas inside the page (lists, chat) get a thin, quiet bar in the
+   same colours as the page one */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: var(--border-strong) transparent;
+}
+*::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+*::-webkit-scrollbar-thumb {
+  background: var(--border-strong);
+  border-radius: 999px;
+}
+*::-webkit-scrollbar-track {
+  background: transparent;
+}
+
 @keyframes toast-in {
   from { opacity: 0; transform: translateY(-8px) scale(0.95); }
   to { opacity: 1; transform: translateY(0) scale(1); }

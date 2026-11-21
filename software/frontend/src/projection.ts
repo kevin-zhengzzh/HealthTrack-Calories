@@ -61,14 +61,28 @@ export interface Projection {
   months: { month: number; weightKg: number }[] // month 0 = today … 12
   startBalance: number // kcal/day on day one: negative = losing
   maintenance: number // kcal/day today, without workouts
+  // The plan would drive weight down to a life-threatening level (BMI 13):
+  // the curve stops there instead of running on towards zero or below.
+  hitFloor: boolean
+  floorKg: number
 }
+
+// BMI 13 is already life-threatening; past it the simple energy model means
+// nothing, so the projection doesn't go lower.
+export const FLOOR_BMI = 13
 
 export function project(p: CompleteProfile, intakePerDay: number, burnPerDay: number, days = 365, year?: number): Projection {
   let w = p.weightKg
+  const floorKg = Math.min(p.weightKg, FLOOR_BMI * (p.heightCm / 100) ** 2)
+  let hitFloor = false
   const months = [{ month: 0, weightKg: w }]
   const balanceAt = (kg: number) => intakePerDay - (maintenance(p, kg, year) + burnPerDay)
   for (let d = 1; d <= days; d++) {
     w += balanceAt(w) / KCAL_PER_KG
+    if (w < floorKg) {
+      w = floorKg
+      hitFloor = true
+    }
     // A point at the end of each twelfth of the period (month 12 = last day)
     if (d === Math.round((months.length * days) / 12)) months.push({ month: months.length, weightKg: w })
   }
@@ -78,5 +92,7 @@ export function project(p: CompleteProfile, intakePerDay: number, burnPerDay: nu
     months,
     startBalance: balanceAt(p.weightKg),
     maintenance: maintenance(p, p.weightKg, year),
+    hitFloor,
+    floorKg,
   }
 }
