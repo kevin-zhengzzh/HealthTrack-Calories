@@ -4,6 +4,7 @@ import { checkInToday, getIntakeHistory, getMe, getTodayRewards, getTodayStatus,
 import { useStore } from '../store'
 import type { CheckInResult, IntakeRecord, WorkoutRecord } from '../types'
 import NetBanner from '../components/NetBanner'
+import { isComplete, maintenance } from '../projection'
 import TodayIntakeCard from '../components/TodayIntakeCard'
 import TodayBurnCard from '../components/TodayBurnCard'
 import { localDateStr } from '../intake'
@@ -106,6 +107,9 @@ export default function Dashboard() {
   const weekBurned = workoutHistory.filter((r) => r.date >= weekStart && r.date <= today).reduce((s, r) => s + r.calories, 0)
   const eaten = (todayMeals ?? []).reduce((s, r) => s + r.calories, 0)
   const burned = todayWorkouts.reduce((s, r) => s + r.calories, 0)
+  // Base burn: a whole day's maintenance from the Plan page's body details
+  const profile = user?.profile
+  const base = isComplete(profile) ? Math.round(maintenance(profile)) : null
 
   return (
     <div className="flex flex-col gap-6">
@@ -148,7 +152,8 @@ export default function Dashboard() {
 
       <NetBanner
         eaten={eaten}
-        burned={burned}
+        workoutKcal={burned}
+        base={base}
         meals={todayMeals?.length ?? 0}
         workouts={todayWorkouts.length}
         loading={todayMeals === null || initialLoading}
@@ -156,7 +161,7 @@ export default function Dashboard() {
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
         <TodayIntakeCard records={todayMeals} />
-        <TodayBurnCard today={todayWorkouts} weekTotal={weekBurned} loading={initialLoading} />
+        <TodayBurnCard today={todayWorkouts} weekTotal={weekBurned} base={base} loading={initialLoading} />
       </div>
 
     </div>

@@ -223,6 +223,12 @@ Phase 2 的 `msa-backend` / `msa-frontend` 和它的 `neondb` 库**保持不动*
 - **原因**：自带滚动条只在长页面出现并占掉十几像素，导致长页和短页的内容左右错位（例如 Plan 和 Check-ins）。
 - **实现要点**：用 `ResizeObserver` 盯 body 尺寸、`MutationObserver` 盯 body 的 style（弹窗锁定滚动时 `overflow: hidden`，此时隐藏）；拖动按比例换算成 `scrollTo`。
 
+### D-29 首页的消耗加上基础消耗（2026-11-22，修改 D-23 / D-25 的净热量算法）
+- **决定**：填了 Plan 页的身体数据后，首页 Burned = **基础消耗** + 当天运动，Net = 吃了 − Burned。基础消耗 = Plan 页的维持热量（Mifflin-St Jeor BMR × 日常活动系数，D-26），**按整天计**，前端由 `user.profile` 现算，不新增接口。Plan 页把这一行改名为 "Base burn (maintenance)"。
+- **净热量的条件**：有饮食记录，且消耗一侧有数据（有身体数据，或有运动记录）。没有身体数据时保持 D-25 的老规则（饮食和运动都要有）。
+- **不变**：消耗圆环和消耗目标仍然只算运动（目标是运动目标）；消耗卡片底部一行显示 "With base burn X: Y kcal today"，没身体数据时提示去 Plan 填。
+- **代价**：按整天计，早上刚吃完早饭时 Net 会是很大的负数；没有按时间折算，免得数字一直在变、难以理解。
+
 ### D-14 部署工作流暂时只能手动触发（2026-11-18；2026-11-19 已恢复自动部署）
 - **决定**：`deploy.yml` 只保留 `workflow_dispatch`。
 - **原因**：最初镜像名和应用名都指向 Phase 2，自动部署会覆盖线上服务。现在已改为 `healthtrack-*`，并且首次部署已成功。
@@ -261,6 +267,7 @@ Phase 2 的 `msa-backend` / `msa-frontend` 和它的 `neondb` 库**保持不动*
 | 2026-11-21 | History 页：Food Log / Workouts / Check-ins 三个标签（D-27），旧地址重定向；本地截图确认跳转和手机布局 |
 | 2026-11-21 | Net 问号提示；Plan 页左右一致（消耗目标可清除）、身体数据、一年体重预测（D-26，迁移 `BurnGoalOptionalAndBodyProfile`，后端 153 / 前端 47 个测试） |
 | 2026-11-21 | 第 2 步：Dashboard 只看今天（D-25）：净热量横幅、今日摄入/消耗对称圆环卡片、横向签到卡片；临时 Statistics 页放原来的图表；本地 Playwright 截图检查了桌面和手机布局 |
+| 2026-11-22 | 首页 Burned / Net 计入基础消耗（D-29）；本地截图检查了三种情况（有身体数据 ± 运动、无身体数据）和手机布局 |
 | 2026-11-21 | 统计/首页改版三步计划的第 1 步：Plan 页 + 目标按周存储（D-24，迁移 `WeeklyIntakeGoal`，共 141 个测试）。第 2 步首页改版、第 3 步统计页（Intake/Burned 切换，自然周/月/年可往回翻，日均只算有记录的天，排行榜） |
 
 ---
