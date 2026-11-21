@@ -1,66 +1,76 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { getPointHistory } from '../api'
+import { localDateStr } from '../intake'
+import { useStore } from '../store'
 import type { PointTransaction } from '../types'
+import { EmptyCard, GroupCard, LoadingCard, Row, ShowMore, Tile } from '../components/HistoryParts'
+import { formatDay, formatTime, groupBy, GROUPS_PER_PAGE } from '../historyFormat'
+
+// The Points tab of History: points earned (check-ins, workouts) and spent
+// (skins), a card per day like the Food Log. Opened from the user menu too.
+const SPEND_COLOR = '#dc2626'
+
+function icon(reason: string) {
+  if (reason.startsWith('Daily check-in')) return '✓'
+  if (reason.startsWith('Workout')) return '🏃'
+  if (reason.startsWith('Purchased')) return '🎨'
+  return '⭐'
+}
+
+const fmtPts = (n: number) => `${n > 0 ? '+' : n < 0 ? '−' : ''}${Math.abs(n).toLocaleString()} pts`
 
 export default function PointsHistory() {
+  const points = useStore((s) => s.user?.points)
+  const leaderboardRefreshKey = useStore((s) => s.leaderboardRefreshKey)
   const [history, setHistory] = useState<PointTransaction[]>([])
+  const [loading, setLoading] = useState(true)
+  const [shownDays, setShownDays] = useState(GROUPS_PER_PAGE)
 
+  // Refetched when rewards are claimed from Daily Tasks (which bumps this key)
   useEffect(() => {
-    getPointHistory().then(setHistory).catch(console.error)
-  }, [])
+    getPointHistory().then(setHistory).catch(console.error).finally(() => setLoading(false))
+  }, [leaderboardRefreshKey])
 
-  // Group transactions by month for display
-  const grouped = history.reduce<Record<string, PointTransaction[]>>((acc, t) => {
-    const month = t.createdAt.slice(0, 7) // "2026-07"
-    if (!acc[month]) acc[month] = []
-    acc[month].push(t)
-    return acc
-  }, {})
+  // Grouped by the local day the points changed
+  const days = useMemo(
+    () => groupBy([...history].sort((a, b) => b.createdAt.localeCompare(a.createdAt)), (t) => localDateStr(new Date(t.createdAt))),
+    [history],
+  )
 
   return (
     <div className="flex flex-col gap-6">
-      <h1 className="text-3xl font-bold text-[var(--text-primary)]">Points History</h1>
-
-      {history.length === 0 ? (
-        <div className="bg-[var(--bg-surface)] rounded-2xl shadow p-8 text-center text-[var(--text-muted)]">
-          <p className="text-4xl mb-3">✨</p>
-          <p>No point activity yet. Check in or record a workout to start earning!</p>
-        </div>
-      ) : (
-        Object.entries(grouped)
-          .sort(([a], [b]) => b.localeCompare(a))
-          .map(([month, entries]) => (
-            <div key={month} className="bg-[var(--bg-surface)] rounded-2xl shadow p-5">
-              <h2 className="font-semibold text-[var(--text-secondary)] text-sm uppercase tracking-wide mb-3">
-                {new Date(`${month}-01T00:00:00`).toLocaleDateString('en-US', { month: 'long', year: 'numeric' })}
-              </h2>
-              <ul className="divide-y divide-[var(--border-subtle)]">
-                {entries.map((t) => (
-                  <li key={t.id} className="py-3 flex items-center gap-3">
-                    <span
-                      className="w-8 h-8 rounded-full flex items-center justify-center text-white text-sm font-bold flex-shrink-0"
-                      style={{ backgroundColor: t.amount >= 0 ? 'var(--primary)' : '#dc2626' }}
-                    >
-                      {t.amount >= 0 ? '+' : '−'}
-                    </span>
-                    <div className="flex-1 min-w-0">
-                      <p className="text-sm font-medium text-[var(--text-primary)]">{t.reason}</p>
-                      <p className="text-xs text-[var(--text-muted)] mt-0.5">
-                        {new Date(t.createdAt).toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' })}
-                      </p>
-                    </div>
-                    <span
-                      className="text-sm font-semibold flex-shrink-0"
-                      style={{ color: t.amount >= 0 ? 'var(--primary-text)' : '#dc2626' }}
-                    >
-                      {t.amount >= 0 ? '+' : ''}{t.amount}
-                    </span>
-                  </li>
-                ))}
-              </ul>
-            </div>
-          ))
+      {points != null && (
+        <p className="text-sm text-[var(--text-muted)] -mb-2">
+          Balance <span className="font-semibold tabular-nums text-[var(--text-primary)]">{points.toLocaleString()} pts</span>
+          {' '}· earn them by checking in and recording workouts, spend them on skins in the Store.
+        </p>
       )}
+
+      {loading ? (
+        <LoadingCard />
+      ) : history.length === 0 ? (
+        <EmptyCard title="No points yet">Check in or record a workout, then claim the points in Daily Tasks.</EmptyCard>
+      ) : (
+        days.slice(0, shownDays).map(([date, items]) => (
+          <GroupCard key={date} title={formatDay(date)} total={fmtPts(items.reduce((s, t) => s + t.amount, 0))}>
+            {items.map((t) => (
+              <Row
+                key={t.id}
+                tile={
+                  <Tile color={t.amount < 0 ? '#fee2e2' : 'var(--primary-light)'}>
+                    <span style={{ color: t.amount < 0 ? SPEND_COLOR : 'var(--primary-text)' }}>{icon(t.reason)}</span>
+                  </Tile>
+                }
+                name={t.reason}
+                detail={formatTime(t.createdAt)}
+                figure={<span style={{ color: t.amount < 0 ? SPEND_COLOR : 'var(--primary-text)' }}>{fmtPts(t.amount)}</span>}
+              />
+            ))}
+          </GroupCard>
+        ))
+      )}
+
+      <ShowMore shown={shownDays} total={days.length} onMore={() => setShownDays((n) => n + GROUPS_PER_PAGE)} noun="days" />
     </div>
   )
 }

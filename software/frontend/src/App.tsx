@@ -1,5 +1,5 @@
-import { useEffect, useState } from 'react'
-import { BrowserRouter, Link, Navigate, Route, Routes, useLocation } from 'react-router-dom'
+import { useEffect } from 'react'
+import { BrowserRouter, Link, Navigate, Route, Routes, useLocation, useNavigate } from 'react-router-dom'
 import { useStore } from './store'
 import { claimRewards, getMe, getSkins, getTodayRewards, getTodayStatus, updateUsername, uploadAvatar } from './api'
 import Sidebar from './components/Sidebar'
@@ -7,7 +7,7 @@ import RecordButton from './components/RecordButton'
 import UserMenu from './components/UserMenu'
 import DailyTasksMenu from './components/DailyTasksMenu'
 import StoreModal from './components/StoreModal'
-import PointsHistoryModal from './components/PointsHistoryModal'
+import PointsHistory from './pages/PointsHistory'
 import ToastContainer from './components/ToastContainer'
 import OverlayScrollbar from './components/OverlayScrollbar'
 import ChatWidget from './components/ChatWidget'
@@ -163,7 +163,7 @@ function NavBar({ onOpenStore, onOpenPoints }: { onOpenStore: () => void; onOpen
 function PrivateLayout() {
   const { token, user, setUser, setTheme, storeOpen, setStoreOpen, setSkins, setRewardStatus, setCheckedInToday } = useStore()
   const location = useLocation()
-  const [pointsOpen, setPointsOpen] = useState(false)
+  const navigate = useNavigate()
 
   // Hooks must be called before any conditional return
   useEffect(() => {
@@ -196,7 +196,7 @@ function PrivateLayout() {
 
   return (
     <div className="min-h-screen bg-[var(--bg-page)]">
-      <NavBar onOpenStore={() => setStoreOpen(true)} onOpenPoints={() => setPointsOpen(true)} />
+      <NavBar onOpenStore={() => setStoreOpen(true)} onOpenPoints={() => navigate('/history/points')} />
       <div className="pt-14">
         <div className="max-w-7xl mx-auto px-4 py-6 lg:py-8 flex flex-col lg:flex-row gap-6 lg:gap-10 items-stretch lg:items-start">
           {showSidebar && <Sidebar />}
@@ -216,6 +216,7 @@ function PrivateLayout() {
                 <Route path="food" element={<FoodLog />} />
                 <Route path="workouts" element={<RecordHistory />} />
                 <Route path="check-ins" element={<History />} />
+                <Route path="points" element={<PointsHistory />} />
               </Route>
               {/* Old addresses, before the three pages became History tabs */}
               <Route path="/food-log" element={<Navigate to="/history/food" replace />} />
@@ -234,7 +235,6 @@ function PrivateLayout() {
         </div>
       </div>
       {storeOpen && <StoreModal onClose={() => setStoreOpen(false)} />}
-      {pointsOpen && <PointsHistoryModal onClose={() => setPointsOpen(false)} />}
       <ChatWidget />
     </div>
   )
