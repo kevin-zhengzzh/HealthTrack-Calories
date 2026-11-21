@@ -3,11 +3,12 @@ import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import type { ChatStreamEvent, ChatTurn } from '../../src/types'
 
-const { getChatQuota, streamChat } = vi.hoisted(() => ({
+const { getChatQuota, streamChat, updateGoal } = vi.hoisted(() => ({
   getChatQuota: vi.fn(),
   streamChat: vi.fn(),
+  updateGoal: vi.fn(),
 }))
-vi.mock('../../src/api', () => ({ getChatQuota, streamChat }))
+vi.mock('../../src/api', () => ({ getChatQuota, streamChat, updateGoal }))
 
 import ChatWidget from '../../src/components/ChatWidget'
 
@@ -39,8 +40,9 @@ describe('ChatWidget', () => {
     await openWidget()
 
     expect(screen.getByRole('dialog', { name: 'HealthTrack assistant' })).toBeInTheDocument()
-    expect(screen.getByRole('button', { name: /Rank/ })).toBeInTheDocument()
-    expect(screen.getByRole('button', { name: /Workout advice/ })).toBeInTheDocument()
+    // Only the two topics the pages can't answer: setting a plan, and advice
+    expect(screen.getAllByRole('button').filter((b) => b.closest('[aria-label="Topics"]')).map((b) => b.textContent))
+      .toEqual(['🎯 Set my plan', '💡 Workout advice'])
     expect(await screen.findByText('28 / 30 messages left today')).toBeInTheDocument()
   })
 
@@ -62,25 +64,26 @@ describe('ChatWidget', () => {
   })
 
   it('one click on a pill sends its prompt with the mode; the next typed message has no mode', async () => {
-    streams({ type: 'text', text: "You're #2 on points." }, { type: 'done', remaining: 27 })
-    streams({ type: 'text', text: '30 points behind.' }, { type: 'done', remaining: 26 })
+    streams({ type: 'text', text: 'Try adding a rest day.' }, { type: 'done', remaining: 27 })
+    streams({ type: 'text', text: 'Yoga works.' }, { type: 'done', remaining: 26 })
     const user = await openWidget()
 
-    await user.click(screen.getByRole('button', { name: /Rank/ }))
+    await user.click(screen.getByRole('button', { name: /Workout advice/ }))
 
-    expect(streamChat).toHaveBeenLastCalledWith([], 'Where do I stand on the leaderboards?', 'rank', expect.any(Function), expect.any(AbortSignal))
-    expect(await screen.findByText("You're #2 on points.")).toBeInTheDocument()
+    const prompt = 'Based on my recent workouts, what should I do next?'
+    expect(streamChat).toHaveBeenLastCalledWith([], prompt, 'advice', expect.any(Function), expect.any(AbortSignal))
+    expect(await screen.findByText('Try adding a rest day.')).toBeInTheDocument()
     // The user bubble carries the topic badge (the pill itself has the same label)
-    expect(screen.getAllByText('🏆 Rank').length).toBe(2)
+    expect(screen.getAllByText('💡 Workout advice').length).toBe(2)
 
-    await user.type(messageBox(), 'How far behind am I?{Enter}')
+    await user.type(messageBox(), 'What kind?{Enter}')
 
     expect(streamChat).toHaveBeenLastCalledWith(
       [
-        { role: 'user', text: 'Where do I stand on the leaderboards?' },
-        { role: 'assistant', text: "You're #2 on points." },
+        { role: 'user', text: prompt },
+        { role: 'assistant', text: 'Try adding a rest day.' },
       ],
-      'How far behind am I?',
+      'What kind?',
       null,
       expect.any(Function),
       expect.any(AbortSignal),
@@ -92,14 +95,55 @@ describe('ChatWidget', () => {
     streams({ type: 'text', text: 'All good now.' }, { type: 'done', remaining: 27 })
     const user = await openWidget()
 
-    await user.click(screen.getByRole('button', { name: /Goal/ }))
+    await user.click(screen.getByRole('button', { name: /Set my plan/ }))
     expect(await screen.findByRole('alert')).toHaveTextContent('unavailable right now')
 
     await user.click(screen.getByRole('button', { name: 'Retry' }))
 
     expect(await screen.findByText('All good now.')).toBeInTheDocument()
     expect(screen.queryByRole('alert')).not.toBeInTheDocument()
-    expect(streamChat).toHaveBeenLastCalledWith([], 'How close am I to my weekly goal?', 'goal', expect.any(Function), expect.any(AbortSignal))
+    expect(streamChat).toHaveBeenLastCalledWith([], 'Help me set my daily intake and weekly burn goals.', 'plan', expect.any(Function), expect.any(AbortSignal))
+  })
+
+  it('shows a proposed plan as a card and saves it only when Apply is pressed', async () => {
+    streams(
+      { type: 'text', text: 'A moderate deficit would be 1,900 a day.' },
+      { type: 'proposal', proposal: { intakePerDay: 1900, burnPerWeek: 2100, currentIntakePerDay: null, currentBurnPerWeek: 2000 } },
+      { type: 'done', remaining: 27 },
+    )
+    updateGoal.mockResolvedValue({ intake: { perDay: 1900, perWeek: 13300 }, burn: { perDay: 300, perWeek: 2100 } })
+    const user = await openWidget()
+
+    await user.click(screen.getByRole('button', { name: /Set my plan/ }))
+
+    expect(await screen.findByText('Proposed plan')).toBeInTheDocument()
+    expect(screen.getByText('not set →')).toBeInTheDocument()
+    expect(screen.getByText('1,900 kcal')).toBeInTheDocument()
+    expect(screen.getByText('2,100 kcal')).toBeInTheDocument()
+    expect(updateGoal).not.toHaveBeenCalled()
+
+    await user.click(screen.getByRole('button', { name: 'Apply' }))
+
+    expect(await screen.findByText(/Applied/)).toBeInTheDocument()
+    expect(updateGoal).toHaveBeenCalledWith('intake', { perDay: 1900 })
+    expect(updateGoal).toHaveBeenCalledWith('burn', { perWeek: 2100 })
+  })
+
+  it('keeps Set my plan on for typed replies until Done', async () => {
+    streams({ type: 'text', text: 'Lose, keep or gain?' }, { type: 'done', remaining: 27 })
+    streams({ type: 'text', text: 'Here you go.' }, { type: 'done', remaining: 26 })
+    streams({ type: 'text', text: 'Hi.' }, { type: 'done', remaining: 25 })
+    const user = await openWidget()
+
+    await user.click(screen.getByRole('button', { name: /Set my plan/ }))
+    await screen.findByText('Lose, keep or gain?')
+    await user.type(messageBox(), 'Lose slowly{Enter}')
+    expect(streamChat).toHaveBeenLastCalledWith(expect.any(Array), 'Lose slowly', 'plan', expect.any(Function), expect.any(AbortSignal))
+
+    await screen.findByText('Here you go.')
+    await user.click(screen.getByRole('button', { name: 'Done' }))
+    await user.type(messageBox(), 'hello{Enter}')
+    expect(streamChat).toHaveBeenLastCalledWith(expect.any(Array), 'hello', null, expect.any(Function), expect.any(AbortSignal))
   })
 
   it('surfaces request errors thrown before the stream starts (e.g. quota 429)', async () => {

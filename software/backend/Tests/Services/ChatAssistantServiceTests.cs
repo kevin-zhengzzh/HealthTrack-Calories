@@ -50,7 +50,9 @@ public class ChatAssistantServiceTests
         Assert.Equal("Hi there", Text(events));
         Assert.Empty(events.OfType<AssistantToolStarted>());
         var request = Assert.Single(model.Requests);
-        Assert.Equal(ChatToolExecutor.Definitions, request.Tools);
+        // No topic: only the read-only tools, never propose_goals
+        Assert.Equal(ChatToolExecutor.ReadOnlyDefinitions, request.Tools);
+        Assert.DoesNotContain(request.Tools!, t => t.Name == ChatToolExecutor.ProposeGoals);
         Assert.Equal(ChatRole.System, request.Messages[0].Role);
         Assert.Equal("hello", request.Messages[^1].Content);
     }
@@ -149,14 +151,46 @@ public class ChatAssistantServiceTests
     [Fact]
     public async Task Mode_NarrowsToolsAndAddsTopicInstructions()
     {
-        var model = new FakeChatModel().Returns(FakeChatModel.Text("You're #2 on points."));
+        var model = new FakeChatModel().Returns(FakeChatModel.Text("Do you want to lose, keep or gain weight?"));
         var (service, _) = NewService(model);
 
-        await foreach (var _ in service.RunAsync(Me, Today, null, "Where do I stand?", ChatModes.Find("rank"))) { }
+        await foreach (var _ in service.RunAsync(Me, Today, null, "Help me set my goals", ChatModes.Find("plan"))) { }
 
         var request = Assert.Single(model.Requests);
-        Assert.Equal([ChatToolExecutor.Rank], request.Tools!.Select(t => t.Name));
-        Assert.Contains("Leaderboards:", request.Messages[0].Content);
+        Assert.Equal([ChatToolExecutor.PlanContext, ChatToolExecutor.ProposeGoals], request.Tools!.Select(t => t.Name));
+        Assert.Contains("Plan:", request.Messages[0].Content);
+    }
+
+    [Fact]
+    public async Task ValidProposal_IsPassedOnAsACard_WithoutSavingAnything()
+    {
+        var model = new FakeChatModel()
+            .Returns(FakeChatModel.ToolCall("call_1", ChatToolExecutor.ProposeGoals, """{"intakePerDay":1900,"burnPerWeek":2100}"""))
+            .Returns(FakeChatModel.Text("Here's a plan — press Apply if it looks right."));
+        var (service, _) = NewService(model);
+
+        var events = new List<AssistantEvent>();
+        await foreach (var e in service.RunAsync(Me, Today, null, "plan", ChatModes.Find("plan"))) events.Add(e);
+
+        var card = Assert.Single(events.OfType<AssistantProposal>()).Proposal;
+        Assert.Equal(1900, card.GetProperty("intakePerDay").GetInt32());
+        Assert.Equal(2100, card.GetProperty("burnPerWeek").GetInt32());
+        Assert.Equal(2000, card.GetProperty("currentBurnPerWeek").GetInt32());
+    }
+
+    [Fact]
+    public async Task RejectedProposal_ShowsNoCard()
+    {
+        var model = new FakeChatModel()
+            .Returns(FakeChatModel.ToolCall("call_1", ChatToolExecutor.ProposeGoals, """{"intakePerDay":800}"""))
+            .Returns(FakeChatModel.Text("That's too low."));
+        var (service, _) = NewService(model);
+
+        var events = new List<AssistantEvent>();
+        await foreach (var e in service.RunAsync(Me, Today, null, "plan", ChatModes.Find("plan"))) events.Add(e);
+
+        Assert.Empty(events.OfType<AssistantProposal>());
+        Assert.Contains("between 1200", model.Requests[1].Messages[^1].Content);
     }
 
     [Fact]

@@ -1,7 +1,8 @@
 import { useEffect, useRef, useState } from 'react'
 import ReactMarkdown from 'react-markdown'
 import { getChatQuota, streamChat } from '../api'
-import type { ChatQuota, ChatTurn } from '../types'
+import type { ChatQuota, ChatTurn, GoalProposal } from '../types'
+import { useGoals } from '../goals'
 
 // AI chat assistant (specs/06-ai-features-spec.md §5.1, §5.3). A floating button in
 // the same right-hand column as RecordButton (bottom-6) and BackToTopButton
@@ -14,18 +15,22 @@ const MAX_HISTORY_TURNS = 20 // CA-7; the server caps it too
 // straight away, tagged with its id as `mode` — the backend then gives the
 // model topic-specific instructions and only the tools that topic needs.
 // The mode applies to that one message only. Ids must match ChatModes.
+// Facts the pages already show (week, rank, points, goal progress) have no
+// pill; you can still just ask. "Set my plan" is the one topic that can
+// change data: the model proposes goals and the user applies them from a
+// card (AGENTS.md D-34).
 interface ChatModeOption {
   id: string
   label: string
   prompt: string
+  // Stays on for the messages typed after it (until Done): planning is a
+  // short conversation — the assistant asks what you want, then proposes
+  sticky?: boolean
 }
 
 const MODES: ChatModeOption[] = [
-  { id: 'review', label: '📊 Weekly review', prompt: 'How is my week going?' },
+  { id: 'plan', label: '🎯 Set my plan', prompt: 'Help me set my daily intake and weekly burn goals.', sticky: true },
   { id: 'advice', label: '💡 Workout advice', prompt: 'Based on my recent workouts, what should I do next?' },
-  { id: 'rank', label: '🏆 Rank', prompt: 'Where do I stand on the leaderboards?' },
-  { id: 'points', label: '🪙 Points', prompt: 'Summarize my points and any unclaimed rewards.' },
-  { id: 'goal', label: '🎯 Goal', prompt: 'How close am I to my weekly goal?' },
 ]
 
 const TOOL_LABELS: Record<string, string> = {
@@ -34,6 +39,8 @@ const TOOL_LABELS: Record<string, string> = {
   get_weekly_goal_progress: 'Checking your weekly goal…',
   get_rank: 'Checking the leaderboards…',
   get_points_summary: 'Checking your points…',
+  get_plan_context: 'Looking at your goals and history…',
+  propose_goals: 'Preparing a plan…',
 }
 
 interface Message {
@@ -43,6 +50,8 @@ interface Message {
   mode?: ChatModeOption
   // Failed exchanges stay visible but are left out of the history sent back
   failed?: boolean
+  // Goals the assistant proposed in this answer, shown as an Apply card
+  proposal?: GoalProposal
 }
 
 function ChatIcon({ className }: { className?: string }) {
@@ -68,6 +77,63 @@ function markLastExchangeFailed(messages: Message[]): Message[] {
   return next
 }
 
+// The assistant's proposed goals, old → new. Applying goes through the same
+// endpoints as the Plan page, as the signed-in user; the model can't save.
+function ProposalCard({ proposal }: { proposal: GoalProposal }) {
+  const { save } = useGoals()
+  const [state, setState] = useState<'idle' | 'saving' | 'applied' | 'dismissed' | 'error'>('idle')
+  const rows = [
+    proposal.intakePerDay !== null && { label: 'Daily intake', from: proposal.currentIntakePerDay, to: proposal.intakePerDay },
+    proposal.burnPerWeek !== null && { label: 'Weekly burn', from: proposal.currentBurnPerWeek, to: proposal.burnPerWeek },
+  ].filter((r): r is { label: string; from: number | null; to: number } => !!r)
+
+  async function apply() {
+    setState('saving')
+    try {
+      if (proposal.intakePerDay !== null) await save('intake', { perDay: proposal.intakePerDay })
+      if (proposal.burnPerWeek !== null) await save('burn', { perWeek: proposal.burnPerWeek })
+      setState('applied')
+    } catch {
+      setState('error')
+    }
+  }
+
+  return (
+    <div className="w-[85%] rounded-xl border border-[var(--border)] bg-[var(--bg-surface)] p-3 text-sm shadow-sm">
+      <p className="text-xs font-semibold uppercase tracking-wide text-[var(--text-muted)] mb-2">Proposed plan</p>
+      <ul className="flex flex-col gap-1 mb-3">
+        {rows.map((r) => (
+          <li key={r.label} className="flex items-baseline justify-between gap-2">
+            <span className="text-[var(--text-secondary)]">{r.label}</span>
+            <span className="tabular-nums">
+              <span className="text-[var(--text-muted)]">{r.from === null ? 'not set' : r.from.toLocaleString()} → </span>
+              <span className="font-semibold text-[var(--text-primary)]">{r.to.toLocaleString()} kcal</span>
+            </span>
+          </li>
+        ))}
+      </ul>
+      {state === 'applied' ? (
+        <p className="text-xs font-medium" style={{ color: 'var(--primary-text)' }}>✓ Applied — see the Plan page.</p>
+      ) : state === 'dismissed' ? (
+        <p className="text-xs text-[var(--text-muted)]">Not applied.</p>
+      ) : (
+        <div className="flex gap-2">
+          <button type="button" onClick={() => setState('dismissed')} disabled={state === 'saving'}
+            className="flex-1 border border-[var(--border)] rounded-lg py-1.5 text-xs font-semibold text-[var(--text-secondary)] hover:bg-[var(--bg-inset)] cursor-pointer disabled:opacity-50">
+            Dismiss
+          </button>
+          <button type="button" onClick={apply} disabled={state === 'saving'}
+            className="flex-1 rounded-lg py-1.5 text-xs font-semibold text-white cursor-pointer disabled:opacity-60"
+            style={{ backgroundColor: 'var(--primary)' }}>
+            {state === 'saving' ? 'Applying…' : 'Apply'}
+          </button>
+        </div>
+      )}
+      {state === 'error' && <p className="text-xs text-red-600 mt-2">Couldn't save — try again, or set it on the Plan page.</p>}
+    </div>
+  )
+}
+
 export default function ChatWidget() {
   const [open, setOpen] = useState(false)
   const [messages, setMessages] = useState<Message[]>([])
@@ -76,6 +142,8 @@ export default function ChatWidget() {
   const [toolStatus, setToolStatus] = useState<string | null>(null)
   const [quota, setQuota] = useState<ChatQuota | null>(null)
   const [error, setError] = useState<string | null>(null)
+  // A sticky topic in progress: typed messages are sent with it
+  const [stickyMode, setStickyMode] = useState<ChatModeOption | null>(null)
   const abortRef = useRef<AbortController | null>(null)
   const listRef = useRef<HTMLDivElement>(null)
   const inputRef = useRef<HTMLTextAreaElement>(null)
@@ -109,6 +177,7 @@ export default function ChatWidget() {
       .slice(-MAX_HISTORY_TURNS)
       .map(({ role, text }) => ({ role, text }))
 
+    setStickyMode(withMode?.sticky ? withMode : null)
     setMessages([...base, { role: 'user', text: message, mode: withMode ?? undefined }, { role: 'assistant', text: '' }])
     setInput('')
     setError(null)
@@ -135,6 +204,13 @@ export default function ChatWidget() {
             break
           case 'tool':
             setToolStatus(TOOL_LABELS[event.name] ?? 'Looking up your data…')
+            break
+          case 'proposal':
+            setMessages((prev) => {
+              const next = prev.slice()
+              next[next.length - 1] = { ...next[next.length - 1], proposal: event.proposal }
+              return next
+            })
             break
           case 'done':
             setQuota((q) => (q ? { ...q, used: q.limit - event.remaining, remaining: event.remaining } : q))
@@ -163,8 +239,9 @@ export default function ChatWidget() {
     if (index !== -1) send(messages[index].text, messages.slice(0, index), messages[index].mode ?? null)
   }
 
-  // Typed messages carry no mode, so all tools stay available
-  const submit = () => send(input, messages, null)
+  // Typed messages carry no mode (all read-only tools), unless a sticky
+  // topic like Set my plan is in progress
+  const submit = () => send(input, messages, stickyMode)
 
   const last = messages[messages.length - 1]
   const waitingForFirstText = busy && last?.role === 'assistant' && !last.text
@@ -216,7 +293,7 @@ export default function ChatWidget() {
       <div ref={listRef} className="flex-1 overflow-y-auto px-4 py-3 space-y-3" aria-live="polite">
         {messages.length === 0 && (
           <p className="text-sm text-[var(--text-secondary)]">
-            Ask me anything about your workouts, streak, goal, rank or points — or pick a topic below.
+            Ask me anything about your workouts, streak, goals, rank or points — or let me help you set your plan.
           </p>
         )}
 
@@ -231,8 +308,8 @@ export default function ChatWidget() {
                 <p className="whitespace-pre-wrap break-words">{m.text}</p>
               </div>
             </div>
-          ) : m.text ? (
-            <div key={i} className="flex justify-start">
+          ) : m.text || m.proposal ? (
+            <div key={i} className="flex flex-col items-start gap-2">
               {/* react-markdown never renders raw HTML, so model output can't inject markup */}
               <div className="max-w-[85%] px-3 py-2 rounded-2xl rounded-bl-sm text-sm bg-[var(--bg-inset)] text-[var(--text-primary)] break-words">
                 <ReactMarkdown
@@ -246,6 +323,7 @@ export default function ChatWidget() {
                   {m.text}
                 </ReactMarkdown>
               </div>
+              {m.proposal && <ProposalCard proposal={m.proposal} />}
             </div>
           ) : null,
         )}
@@ -293,6 +371,15 @@ export default function ChatWidget() {
               )
             })}
           </div>
+          {stickyMode && (
+            <div className="flex items-center justify-between gap-2 mb-2 px-2.5 py-1.5 rounded-lg bg-[var(--bg-inset)] text-xs text-[var(--text-secondary)]">
+              <span>{stickyMode.label} — your replies continue this</span>
+              <button type="button" onClick={() => setStickyMode(null)} disabled={busy}
+                className="font-semibold hover:underline cursor-pointer disabled:opacity-50" style={{ color: 'var(--primary-text)' }}>
+                Done
+              </button>
+            </div>
+          )}
           <div className="flex items-end gap-2">
             <textarea
               ref={inputRef}

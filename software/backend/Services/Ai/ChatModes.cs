@@ -9,11 +9,6 @@ public static class ChatModes
 {
     public static readonly IReadOnlyDictionary<string, ChatMode> All = new Dictionary<string, ChatMode>
     {
-        ["review"] = new("review",
-            "Weekly review: summarize how the user's current week is going — workouts, calories against the " +
-            "weekly goal and the check-in streak — and compare it with last week.",
-            [ChatToolExecutor.WorkoutSummary, ChatToolExecutor.WeeklyGoalProgress, ChatToolExecutor.CheckInStatus]),
-
         ["advice"] = new("advice",
             "Workout advice: first look at the user's recent workouts, then give 2–3 specific, practical " +
             "suggestions grounded in that data (variety, rest days, consistency, a realistic next session). " +
@@ -21,20 +16,19 @@ public static class ChatModes
             "injury or a health condition, recommend seeing a professional.",
             [ChatToolExecutor.WorkoutSummary, ChatToolExecutor.WeeklyGoalProgress]),
 
-        ["rank"] = new("rank",
-            "Leaderboards: report where the user stands on each leaderboard and how far they are from the next " +
-            "rank. Never mention other users.",
-            [ChatToolExecutor.Rank]),
-
-        ["points"] = new("points",
-            "Points and rewards: explain the user's balance, where recent points came from, and whether today's " +
-            "rewards are still waiting to be claimed (they're claimed from the Daily Tasks menu).",
-            [ChatToolExecutor.PointsSummary]),
-
-        ["goal"] = new("goal",
-            "Weekly goal: report progress toward the weekly calorie goal and what it would take to reach it in " +
-            "the days left this week.",
-            [ChatToolExecutor.WeeklyGoalProgress, ChatToolExecutor.WorkoutSummary]),
+        // The one topic that leads to a data change: the model proposes, the
+        // user applies from a card in the chat (AGENTS.md D-34)
+        ["plan"] = new("plan",
+            "Plan: help the user set their daily intake goal and weekly workout burn goal. First call " +
+            "get_plan_context. If the user hasn't said what they want, ask briefly whether they want to lose, keep " +
+            "or gain weight (and how fast) before proposing. Base the numbers on their base burn when known " +
+            "(otherwise on their logged averages, and mention that filling in body details on the Plan page makes " +
+            "it more accurate). Keep the total daily change moderate, at most about 500 kcal: count it as intake − " +
+            "(base burn + burn goal ÷ 7), so a workout goal adds to the deficit. Pick a burn goal they can reach from " +
+            "where their workouts are now, and never an intake below minimumIntakePerDay. Explain the reasoning in " +
+            "two or three short lines, then call propose_goals. Never say the goals are saved: the user applies " +
+            "them with the card's Apply button. Not medical advice; for health conditions suggest a professional.",
+            [ChatToolExecutor.PlanContext, ChatToolExecutor.ProposeGoals]),
     };
 
     public static ChatMode? Find(string? id) =>

@@ -40,7 +40,7 @@ dotnet ef migrations add <Name>
 npm ci && npm run build && npm test && npx oxlint src
 # 固件编译 + 烧录（firmware/stackchan-scale/）。PlatformIO 装在 E 盘，C 盘空间不足
 PLATFORMIO_CORE_DIR='E:\.platformio' python -m platformio run -t upload --upload-port COM3
-# 本地后端给局域网设备用（不要碰 Phase 2 的 healthtracker 库）
+# 本地后端给局域网设备用（不要碰 Phase 2 的 healthtracker 库）。要用 AI 时加 ASPNETCORE_ENVIRONMENT=Development（user-secrets 只在开发环境加载）
 ConnectionStrings__DefaultConnection="Host=localhost;Port=5432;Database=healthtrack_calories_dev;Username=postgres;Password=postgres" \
   dotnet run --no-launch-profile --urls http://0.0.0.0:5000
 ```
@@ -247,6 +247,15 @@ Phase 2 的 `msa-backend` / `msa-frontend` 和它的 `neondb` 库**保持不动*
 - **决定**：顶部 Intake | Burned 切换；Week（周一至周日）/ Month / Year，‹ › 往回翻（不能翻到未来）。显示合计和日均（**只算有记录的天**——忘记记录的那天不等于没吃），柱状图（周、月每天一根；年每月一根，值为该月的日均），虚线 = 每日目标，点线 = 日均，悬停看数值，纵轴最低 100。下面是排行：摄入 = Top foods（按热量，最多 10 个，按名称不区分大小写合并），消耗 = 按运动类型。AI 周总结和签到热力图保留在下面；每周目标圆环和旧的运动柱状图删除。
 - **数据**：摄入用新接口 `GET /api/intake/stats?from=&to=`（每天合计 + Top 10 食物，范围最多 366 天）——普通历史接口只返回最近 500 条，不够一年；运动记录本来就全部返回，在前端统计。周期计算在 `src/stats.ts`（有单元测试），图表是 `PeriodBarChart`（摄入、消耗共用，只换颜色）。
 
+### D-34 AI 助手的预设只留"Set my plan"和"Workout advice"；计划由 AI 提案、用户点 Apply 才保存（2026-11-22）
+- **去掉**：Weekly review / Rank / Points / Goal 四个预设——内容在页面上都能直接看到（Statistics、Rank、History → Points、首页）；不选预设直接问，助手仍能查这些数据。**保留** Workout advice（页面上没有的生成内容）。
+- **新增 🎯 Set my plan**（模式 `plan`）：工具 `get_plan_context`（当前目标、身体数据、基础消耗 = 和 Plan 页同一个公式的服务器版 `BodyProfile.Maintenance`、最近 28 天的日均摄入和每周运动消耗）和 `propose_goals`（`intakePerDay` / `burnPerWeek`）。
+- **写入方式**：`propose_goals` **不写库**，只校验（摄入不低于 1,200 女 / 1,500 男，`BodyProfile.MinSafeIntake`；其余按 `Goals` 上限），合格时服务端发 SSE 事件 `{type:"proposal"}`，聊天里显示"旧值 → 新值"的卡片，用户点 **Apply** 才由前端以用户身份调用 `PUT /api/user/goals/*`（和 Plan 页同一个接口）。模型说错话或被提示注入也改不了数据。
+- **只有 plan 模式**能用 `propose_goals`：不选预设时只给只读工具（`ChatToolExecutor.ReadOnlyDefinitions`）。
+- **粘性模式**：plan 往往要先问"减重/维持/增重"，所以选了 Set my plan 之后，输入框上方显示 "Set my plan — your replies continue this · Done"，之后打字的回复都继续带 `plan`，点 Done 结束。Workout advice 仍是只对一条消息生效。
+- **提示词**：总的每日变化 = 摄入 −（基础消耗 + 每周消耗目标 ÷ 7），不超过约 500 kcal；第一次本地实测模型只按基础消耗算，加上运动后缺口约 690，已在提示词里写明运动也算进缺口。
+- 本地用真实 DeepSeek 端到端测过：问目标 → 回答"慢慢减" → 卡片出现时数据库没变 → Apply 后两个目标写入，Plan 页同步更新。
+
 ### D-14 部署工作流暂时只能手动触发（2026-11-18；2026-11-19 已恢复自动部署）
 - **决定**：`deploy.yml` 只保留 `workflow_dispatch`。
 - **原因**：最初镜像名和应用名都指向 Phase 2，自动部署会覆盖线上服务。现在已改为 `healthtrack-*`，并且首次部署已成功。
@@ -287,6 +296,7 @@ Phase 2 的 `msa-backend` / `msa-frontend` 和它的 `neondb` 库**保持不动*
 | 2026-11-21 | 第 2 步：Dashboard 只看今天（D-25）：净热量横幅、今日摄入/消耗对称圆环卡片、横向签到卡片；临时 Statistics 页放原来的图表；本地 Playwright 截图检查了桌面和手机布局 |
 | 2026-11-22 | 首页 Burned / Net 计入基础消耗（D-29）；本地截图检查了三种情况（有身体数据 ± 运动、无身体数据）和手机布局 |
 | 2026-11-22 | Device 页、手动记一餐、+ 菜单（D-30）；History 统一样式（D-31）；首页 Today / This week（D-32）；Statistics 周/月/年重做（D-33）。后端 159 / 前端 54 个测试，本地 Playwright 截图检查了宽屏和手机 |
+| 2026-11-22 | AI 助手：Set my plan（提案 + Apply 卡片，D-34）；后端 164 / 前端 56 个测试；本地用真实模型端到端验证 |
 | 2026-11-21 | 统计/首页改版三步计划的第 1 步：Plan 页 + 目标按周存储（D-24，迁移 `WeeklyIntakeGoal`，共 141 个测试）。第 2 步首页改版、第 3 步统计页（Intake/Burned 切换，自然周/月/年可往回翻，日均只算有记录的天，排行榜） |
 
 ---
@@ -320,6 +330,9 @@ Phase 2 的 `msa-backend` / `msa-frontend` 和它的 `neondb` 库**保持不动*
 - **看前端效果**：本机有 Playwright + Edge（`p.chromium.launch(channel='msedge')`）。本地后端 `:5000` + `npx vite`，注册临时账号、`localStorage` 写 `token/userId/username` 后截图；用完删掉临时账号和它的记录（`IntakeRecords`、`WorkoutRecords`、`Users`）。
 - **PowerShell 5.1 会吞掉传给原生程序的双引号**：`psql -c 'DELETE FROM "Users" …'` 到了 psql 那里变成 `DELETE FROM Users`（表名被转小写，报"关系不存在"）。带引号的 SQL 用 Bash 跑。
 - **停掉后台的 `npx vite` 任务不会结束 node 子进程**（两次都留下了）：下次 `--strictPort` 会报端口被占用（旧进程还在用磁盘上的新代码提供页面）。用 `Get-NetTCPConnection -LocalPort 5173` 找到 PID，确认命令行是本仓库的 vite 后再停。
+- **本地后端 AI "unavailable"**：`dotnet run --no-launch-profile` 不设环境，默认 Production，不加载 user-secrets，日志里是 "DeepSeek API key is not configured"。加 `ASPNETCORE_ENVIRONMENT=Development`。
+- **跑后端测试前先停掉本地后端**：`dotnet run` 的进程锁着 `bin/Debug/net10.0/backend.exe`，`dotnet test` 构建会失败（MSB3027）。
+- **前端测试要在 PowerShell 里跑**：在 Git Bash 里 `npm test` 报 "Vitest failed to find the runner"（全部失败，不是代码问题）。
 - **EF Core 的 `ExecuteDeleteAsync`** 内存测试库不支持；需要在测试里跑到的代码改用加载后 `RemoveRange`。
 
 ---
@@ -343,3 +356,10 @@ Phase 2 的 `msa-backend` / `msa-frontend` 和它的 `neondb` 库**保持不动*
 - [ ] 设备上的摄入圆环只在上传/账号检查时更新，网页改动要碰一下设备才显示（D-21，目前可接受）
 - [ ] README 补充智能秤功能说明
 - [ ] 识别失败（或误判为非食物）的照片是否要保留供人工确认
+- [ ] **免责说明**（2026-11-22 讨论，用户说"之后做"）。现有：聊天底部 "AI answers can be wrong. Not medical advice."、Plan 预测 "A rough estimate, not medical advice."。计划加（文案英文）：
+  1. 新页 `/disclaimer` + 每页底部（含登录/注册）一行 "Not medical advice · Disclaimer"：不是医疗服务；热量/基础消耗/预测/AI 建议都是估算；怀孕或哺乳、未满 18 岁、慢性病、进食障碍史者先咨询专业人士；不适时停止运动
+  2. 注册按钮下一行告知并链到说明页（不加勾选框）
+  3. AI 计划卡片 Apply 上方："A suggestion, not medical advice. Check with a professional if you're pregnant, under 18 or have a health condition."（唯一会写数据的地方，最必要）
+  4. Plan 页顶部一句提醒
+  5. Food Log 搜索框下："Calories are estimates from the photo and the scale's weight; tap ✎ to correct."
+  —— 我的建议是 1 + 3 必做，2、4、5 可选；用户还没定做哪几项
