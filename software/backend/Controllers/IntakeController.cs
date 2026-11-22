@@ -121,7 +121,7 @@ public class IntakeController : ControllerBase
         FoodRecognition result;
         try
         {
-            result = await _recognizer.RecognizeAsync(bytes, contentType, ct);
+            result = await _recognizer.RecognizeAsync(bytes, contentType, FoodPhotoSource.Scale, ct);
         }
         catch (FoodRecognitionException ex)
         {
@@ -256,7 +256,7 @@ public class IntakeController : ControllerBase
             .OrderByDescending(r => r.CreatedAt)
             .Take(HistoryLimit)
             .Select(r => new IntakeRecordDto(r.Id, r.FoodName, r.WeightGrams, r.CaloriesPer100g, r.Calories,
-                r.Confidence, r.Corrected, r.ImageData != null, r.Date, r.CreatedAt))
+                r.Confidence, r.Corrected, r.ImageData != null, r.Date, r.CreatedAt, r.Source))
             .ToListAsync();
         return Ok(records);
     }
@@ -289,7 +289,7 @@ public class IntakeController : ControllerBase
 
     private static IntakeRecordDto ToDto(IntakeRecord r) =>
         new(r.Id, r.FoodName, r.WeightGrams, r.CaloriesPer100g, r.Calories, r.Confidence, r.Corrected,
-            r.ImageData != null, r.Date, r.CreatedAt);
+            r.ImageData != null, r.Date, r.CreatedAt, r.Source);
 
     // A meal typed in on the website, without the scale (no photo, no model)
     [HttpPost]
@@ -307,11 +307,107 @@ public class IntakeController : ControllerBase
             CaloriesPer100g = density,
             Calories = IntakeRecord.ComputeCalories(weight, density),
             Confidence = IntakeRecord.ManualConfidence,
+            Source = IntakeRecord.SourceManual,
             Date = CheckInController.ResolveToday(localDate),
             CreatedAt = DateTime.UtcNow,
         };
         _db.IntakeRecords.Add(record);
         await _db.SaveChangesAsync();
+        return Ok(ToDto(record));
+    }
+
+    // ---- Phone photos from the website (AGENTS.md D-37) ----
+    // Two steps, so the user confirms before anything is stored: recognize
+    // (nothing saved, counts against the daily recognition cap), then save
+    // with the photo and the values the user checked.
+
+    private static readonly string[] Confidences = ["high", "medium", "low"];
+
+    private string? CheckImage(IFormFile? image)
+    {
+        if (image is null || image.Length == 0) return "No image uploaded.";
+        if (image.Length > MaxImageBytes) return "Image must be 2MB or smaller.";
+        if (!AllowedImageTypes.Contains(image.ContentType)) return "Unsupported image type. Use JPEG, PNG or WebP.";
+        return null;
+    }
+
+    [HttpPost("recognize")]
+    [RequestSizeLimit(MaxImageBytes + 64 * 1024)]
+    public async Task<IActionResult> RecognizePhoto(IFormFile? image, CancellationToken ct)
+    {
+        if (CheckImage(image) is { } bad) return BadRequest(new { message = bad });
+        if (!_recognizer.IsAvailable)
+            return StatusCode(StatusCodes.Status503ServiceUnavailable,
+                new { message = "Photo recognition isn't available right now — type the meal in instead." });
+
+        var since = DateTime.UtcNow.Date;
+        var usedToday = await _db.AiUsageLogs.CountAsync(
+            l => l.UserId == UserId && l.Feature == AiFeatures.FoodRecognition && l.CreatedAt >= since, ct);
+        if (usedToday >= DailyRecognitionLimit)
+            return StatusCode(StatusCodes.Status429TooManyRequests,
+                new { message = $"Daily limit of {DailyRecognitionLimit} recognitions reached — type the meal in instead." });
+
+        FoodRecognition result;
+        try
+        {
+            result = await _recognizer.RecognizeAsync(await ReadAllAsync(image!, ct), image!.ContentType.ToLowerInvariant(), FoodPhotoSource.Phone, ct);
+        }
+        catch (FoodRecognitionException ex)
+        {
+            _logger.LogWarning(ex, "Photo recognition failed for user {UserId}", UserId);
+            await _usage.SaveAsync(UserId, AiFeatures.FoodRecognition, success: false, ex.Message);
+            return StatusCode(StatusCodes.Status502BadGateway, new { message = "Photo recognition failed — try again, or type the meal in." });
+        }
+        _usage.AddUsage(new ChatUsage(result.InputTokens, result.OutputTokens));
+        await _usage.SaveAsync(UserId, AiFeatures.FoodRecognition, success: true);
+
+        return Ok(result.IsFood
+            ? new PhotoRecognitionDto(true, Truncate(result.FoodName, MaxFoodNameLength), Math.Round(result.CaloriesPer100g, 1), result.Confidence, result.EstimatedGrams)
+            : new PhotoRecognitionDto(false, string.Empty, 0, result.Confidence, null));
+    }
+
+    // Saves a checked phone-photo meal with its photo. corrected: the user
+    // changed the name or calorie density the model gave.
+    [HttpPost("photo")]
+    [RequestSizeLimit(MaxImageBytes + 64 * 1024)]
+    public async Task<IActionResult> CreateFromPhoto(
+        IFormFile? image,
+        [FromForm] string? foodName,
+        [FromForm] double weightGrams,
+        [FromForm] double caloriesPer100g,
+        [FromForm] string? confidence,
+        [FromForm] bool corrected,
+        [FromForm] string? localDate,
+        CancellationToken ct)
+    {
+        if (CheckImage(image) is { } bad) return BadRequest(new { message = bad });
+        if (Validate(new UpdateIntakeRequest(foodName ?? string.Empty, weightGrams, caloriesPer100g), out var name) is { } error)
+            return BadRequest(new { message = error });
+
+        // Each one stores a photo, so the same cap as uploads without recognition
+        var since = DateTime.UtcNow.Date;
+        if (await _db.IntakeRecords.CountAsync(r => r.UserId == UserId && r.CreatedAt >= since, ct) >= DailyUploadLimit)
+            return StatusCode(StatusCodes.Status429TooManyRequests, new { message = $"Daily limit of {DailyUploadLimit} meals reached." });
+
+        var weight = Math.Round(weightGrams, 1);
+        var density = Math.Round(caloriesPer100g, 1);
+        var record = new IntakeRecord
+        {
+            UserId = UserId,
+            FoodName = name,
+            WeightGrams = weight,
+            CaloriesPer100g = density,
+            Calories = IntakeRecord.ComputeCalories(weight, density),
+            Confidence = confidence is not null && Confidences.Contains(confidence) ? confidence : "medium",
+            Corrected = corrected,
+            Source = IntakeRecord.SourcePhoto,
+            ImageData = await ReadAllAsync(image!, ct),
+            ImageContentType = image!.ContentType.ToLowerInvariant(),
+            Date = CheckInController.ResolveToday(localDate),
+            CreatedAt = DateTime.UtcNow,
+        };
+        _db.IntakeRecords.Add(record);
+        await _db.SaveChangesAsync(ct);
         return Ok(ToDto(record));
     }
 
@@ -362,8 +458,7 @@ public class IntakeController : ControllerBase
         record.Corrected = true;
         await _db.SaveChangesAsync();
 
-        return Ok(new IntakeRecordDto(record.Id, record.FoodName, record.WeightGrams, record.CaloriesPer100g,
-            record.Calories, record.Confidence, record.Corrected, record.ImageData != null, record.Date, record.CreatedAt));
+        return Ok(ToDto(record));
     }
 
     [HttpDelete("{id}")]

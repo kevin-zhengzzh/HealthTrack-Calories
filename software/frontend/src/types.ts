@@ -190,6 +190,18 @@ export interface IntakeRecord {
   hasImage: boolean
   date: string // yyyy-MM-dd, the user's local day
   createdAt: string
+  // "scale" (the device), "photo" (a phone photo on the website: weight
+  // typed or estimated, not measured) or "manual"
+  source: 'scale' | 'photo' | 'manual' | string
+}
+
+// What the model saw in a phone photo (nothing is saved yet)
+export interface PhotoRecognition {
+  isFood: boolean
+  foodName: string
+  caloriesPer100g: number
+  confidence: 'high' | 'medium' | 'low' | string
+  estimatedGrams: number | null // a starting value for the user to correct
 }
 
 export interface IntakeStats {

@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
-import { addIntake, getTodayRewards, recordWorkout } from '../api'
+import { getTodayRewards, recordWorkout } from '../api'
 import { INTAKE_COLOR } from '../goals'
 import { useStore } from '../store'
 import { WORKOUT_TYPES } from '../types'
@@ -7,7 +7,7 @@ import { useLockBodyScroll } from '../hooks/useLockBodyScroll'
 import { inputClass, primaryBtn, secondaryBtn } from '../historyFormat'
 import { Modal } from './HistoryParts'
 import { useMediaQuery } from '../hooks/useMediaQuery'
-import { Link } from 'react-router-dom'
+import MealModal from './MealModal'
 
 // Floating + button on the Dashboard, Statistics, Plan, History and Device
 // pages. Two buttons fan out to its left — add a meal (typed in, without the
@@ -151,94 +151,6 @@ function WorkoutModal() {
           <button type="button" onClick={() => setOpen(false)} className={secondaryBtn}>Cancel</button>
           <button type="submit" disabled={saving} className={primaryBtn} style={{ backgroundColor: 'var(--primary)' }}>
             {saving ? 'Saving…' : 'Save'}
-          </button>
-        </div>
-      </form>
-    </Modal>
-  )
-}
-
-// A meal typed in without the scale: name, grams and kcal per 100 g (as on
-// a food label); the total is grams × kcal/100 g, worked out by the server
-function MealModal() {
-  const { pushToast, bumpIntakeRefresh } = useStore()
-  const open = useStore((s) => s.mealModalOpen)
-  const setOpen = useStore((s) => s.setMealModalOpen)
-  const [name, setName] = useState('')
-  const [grams, setGrams] = useState('')
-  const [density, setDensity] = useState('')
-  const [saving, setSaving] = useState(false)
-  useLockBodyScroll(open)
-
-  useEffect(() => {
-    if (!open) return
-    setName('')
-    setGrams('')
-    setDensity('')
-  }, [open])
-
-  const total = Math.round((Number(grams) * Number(density)) / 100)
-
-  async function submit(e: React.FormEvent) {
-    e.preventDefault()
-    const g = Number(grams)
-    const d = Number(density)
-    if (!name.trim()) return pushToast('Enter a food name.')
-    if (!(g >= 1 && g <= 5000)) return pushToast('Weight must be 1–5000 g.')
-    if (!(d >= 0 && d <= 900)) return pushToast('Calories per 100 g must be 0–900.')
-    setSaving(true)
-    try {
-      const r = await addIntake(name.trim(), g, d)
-      bumpIntakeRefresh()
-      pushToast(`${r.foodName} added — ${r.calories} kcal.`, 'success')
-      setOpen(false)
-    } catch (err: unknown) {
-      pushToast(err instanceof Error ? err.message : 'Failed to add meal')
-    } finally {
-      setSaving(false)
-    }
-  }
-
-  if (!open) return null
-  return (
-    <Modal onClose={() => setOpen(false)}>
-      <h2 className="text-xl font-bold text-[var(--text-primary)] mb-1">Add meal</h2>
-      <p className="text-sm text-[var(--text-muted)] mb-3">
-        For food you didn't weigh on the scale. It's logged for today, without a photo; calories = weight × kcal per
-        100 g (from the food label, for example).
-      </p>
-      <p className="text-xs text-[var(--text-secondary)] bg-[var(--bg-inset)] rounded-lg px-3 py-2 mb-4 leading-relaxed">
-        ⚖️ Have a Stack-chan scale? Put food on it and it's logged automatically, with a photo and the measured
-        weight.{' '}
-        <Link to="/device" onClick={() => setOpen(false)} className="font-semibold underline" style={{ color: 'var(--primary-text)' }}>
-          Pair it on the Device page →
-        </Link>
-      </p>
-      <form onSubmit={submit} className="flex flex-col gap-4">
-        <label className="flex flex-col gap-1 text-sm text-[var(--text-secondary)]">
-          Food
-          <input type="text" maxLength={80} placeholder="e.g. Toast" value={name} autoFocus required
-            onChange={(e) => setName(e.target.value)} className={inputClass} />
-        </label>
-        <div className="flex gap-3">
-          <label className="flex-1 flex flex-col gap-1 text-sm text-[var(--text-secondary)]">
-            Weight (g)
-            <input type="number" min={1} max={5000} step="0.1" placeholder="e.g. 60" value={grams} required
-              onChange={(e) => setGrams(e.target.value)} className={inputClass} />
-          </label>
-          <label className="flex-1 flex flex-col gap-1 text-sm text-[var(--text-secondary)]">
-            kcal / 100 g
-            <input type="number" min={0} max={900} step="0.1" placeholder="e.g. 265" value={density} required
-              onChange={(e) => setDensity(e.target.value)} className={inputClass} />
-          </label>
-        </div>
-        <p className="text-sm text-[var(--text-secondary)]">
-          Total: <span className="font-semibold tabular-nums">{grams && density && Number.isFinite(total) ? total.toLocaleString() : '–'} kcal</span>
-        </p>
-        <div className="flex gap-3">
-          <button type="button" onClick={() => setOpen(false)} className={secondaryBtn}>Cancel</button>
-          <button type="submit" disabled={saving} className={primaryBtn} style={{ backgroundColor: INTAKE_COLOR }}>
-            {saving ? 'Saving…' : 'Add'}
           </button>
         </div>
       </form>

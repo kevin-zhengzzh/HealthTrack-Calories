@@ -1,5 +1,5 @@
 import type { GoalKind, Goals, Profile } from './types'
-import type { AuthResponse, CaloriesLeaderboardEntry, ChatQuota, ChatStreamEvent, ChatTurn, CheckIn, CheckinTodayLeaderboardEntry, CheckInResult, CreatedDevice, Device, IntakeRecord, IntakeStats, LeaderboardEntry, PointTransaction, RewardStatus, Skin, StreakLeaderboardEntry, User, WeeklySummary, WorkoutRecord, WorkoutSubmitResult } from './types'
+import type { AuthResponse, CaloriesLeaderboardEntry, ChatQuota, ChatStreamEvent, ChatTurn, CheckIn, CheckinTodayLeaderboardEntry, CheckInResult, CreatedDevice, Device, IntakeRecord, IntakeStats, PhotoRecognition, LeaderboardEntry, PointTransaction, RewardStatus, Skin, StreakLeaderboardEntry, User, WeeklySummary, WorkoutRecord, WorkoutSubmitResult } from './types'
 import { useStore } from './store'
 import { createSseParser } from './sse'
 
@@ -260,6 +260,42 @@ export const addIntake = (foodName: string, weightGrams: number, caloriesPer100g
     method: 'POST',
     body: JSON.stringify({ foodName, weightGrams, caloriesPer100g }),
   })
+
+// Multipart POST with the auth header (request() always sends JSON)
+async function postForm<T>(path: string, form: FormData): Promise<T> {
+  const token = localStorage.getItem('token')
+  const res = await fetch(`${BASE}${path}`, {
+    method: 'POST',
+    headers: token ? { Authorization: `Bearer ${token}` } : {},
+    body: form,
+  })
+  if (!res.ok) {
+    if (res.status === 401) handleUnauthorized(!!token)
+    const err = await res.json().catch(() => ({ message: res.statusText }))
+    throw new Error(extractErrorMessage(err, res.statusText))
+  }
+  return res.json() as Promise<T>
+}
+
+// Phone photo → what the model sees (nothing is saved)
+export function recognizeMealPhoto(photo: Blob) {
+  const form = new FormData()
+  form.append('image', photo, 'meal.jpg')
+  return postForm<PhotoRecognition>('/intake/recognize', form)
+}
+
+// Saves a checked phone-photo meal with its photo
+export function addPhotoMeal(photo: Blob, meal: { foodName: string; weightGrams: number; caloriesPer100g: number; confidence: string; corrected: boolean }) {
+  const form = new FormData()
+  form.append('image', photo, 'meal.jpg')
+  form.append('foodName', meal.foodName)
+  form.append('weightGrams', String(meal.weightGrams))
+  form.append('caloriesPer100g', String(meal.caloriesPer100g))
+  form.append('confidence', meal.confidence)
+  form.append('corrected', String(meal.corrected))
+  form.append('localDate', localDateStr())
+  return postForm<IntakeRecord>('/intake/photo', form)
+}
 
 // Per-day totals and top foods for the Statistics page (inclusive dates)
 export const getIntakeStats = (from: string, to: string) =>
