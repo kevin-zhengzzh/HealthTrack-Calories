@@ -264,6 +264,13 @@ Phase 2 的 `msa-backend` / `msa-frontend` 和它的 `neondb` 库**保持不动*
 - **Add meal 弹窗**：说明手动记录没有照片、热量 = 克数 × kcal/100g；灰底提示 "Have a Stack-chan scale? … Pair it on the Device page →"。
 - **免责说明（待办里的 1–5 全做）**：公开页面 `/disclaimer`（登录前后都能打开）；`LegalFooter` "Estimates only, not medical advice · Disclaimer" 放在所有登录后页面、登录页、注册页底部，首页（未登录的 Landing）原有页脚也加上；注册按钮下一行告知；AI 计划卡片 Apply 上方提醒；Plan 页标题下一句；Food Log 搜索框下说明热量来源和 ✎ 修正。
 
+### D-36 AI 助手能看饮食数据；周总结写进饮食；悬浮按钮重排（2026-11-22）
+- **新工具 `get_intake_summary`**（只读，不选预设时也可用）：范围 today / yesterday / this_week / last_week / this_month / last_month；返回总摄入、有记录的天数、**按有记录的天算的日均**、每天合计、每日摄入目标、未识别的条数、Top 5 食物。通用提示词加上 "meals (calories eaten)"。实测问"昨天吃了什么""这周吃得怎么样"能正确回答。
+- **周总结**：统计里加 `meals`（有饮食记录的天数、总量、日均、超目标的天数、上周日均、最低安全摄入、Top 3 食物）；只有运动和饮食**都没有**时才用固定文案（改为 "Nothing was logged last week…"）。提示词改为健康教练，说明日均只算有记录的天；`minimumSafeIntakePerDay` 是通用安全线不是用户自己设的（实测模型说成了 "the minimum you've set for yourself"，已在提示词里纠正），低于时只能建议多吃一点。已缓存的旧周总结不会重新生成。
+- **悬浮按钮**：从下往上 +（bottom-6）、聊天（bottom-24）、回到顶部（bottom-42）；回到顶部只在页面滚动超过 400px 后淡入（Rank 页同样）。
+- **暗色主题检查**：所有新页面截图检查过，只有 Points 标签"花费"那一格用的浅粉底在暗色下刺眼，改为半透明红。
+- 删除不再使用的 `Pagination` 组件和它的测试。
+
 ### D-14 部署工作流暂时只能手动触发（2026-11-18；2026-11-19 已恢复自动部署）
 - **决定**：`deploy.yml` 只保留 `workflow_dispatch`。
 - **原因**：最初镜像名和应用名都指向 Phase 2，自动部署会覆盖线上服务。现在已改为 `healthtrack-*`，并且首次部署已成功。
@@ -307,6 +314,7 @@ Phase 2 的 `msa-backend` / `msa-frontend` 和它的 `neondb` 库**保持不动*
 | 2026-11-22 | AI 助手：Set my plan（提案 + Apply 卡片，D-34）；后端 164 / 前端 56 个测试；本地用真实模型端到端验证 |
 | 2026-11-22 | PR #10（History 标签、浮动滚动条）、#11（基础消耗、Statistics、Device 页、History 统一样式、Points 标签）、#12（AI Set my plan）合并，均自动部署成功（最新 `b2fa03c`）。存档：待办新增 4 项（Statistics 下两块挪走、+ 按钮悬停横向展开、Add meal 说明和设备入口、免责说明），下次从这里开始 |
 | 2026-11-22 | 4 项待办完成（D-35）：周总结进侧边栏、热力图进 Check-ins、+ 悬停横向展开、Add meal 说明、免责说明页和各处提醒；前端 57 个测试，本地截图检查了宽屏、手机、注册页和说明页 |
+| 2026-11-22 | AI 看饮食、周总结写饮食、悬浮按钮重排、暗色检查（D-36）；后端 167 / 前端 51 个测试（删了 Pagination 的 6 个） |
 | 2026-11-21 | 统计/首页改版三步计划的第 1 步：Plan 页 + 目标按周存储（D-24，迁移 `WeeklyIntakeGoal`，共 141 个测试）。第 2 步首页改版、第 3 步统计页（Intake/Burned 切换，自然周/月/年可往回翻，日均只算有记录的天，排行榜） |
 
 ---
@@ -342,6 +350,7 @@ Phase 2 的 `msa-backend` / `msa-frontend` 和它的 `neondb` 库**保持不动*
 - **停掉后台的 `npx vite` 任务不会结束 node 子进程**（两次都留下了）：下次 `--strictPort` 会报端口被占用（旧进程还在用磁盘上的新代码提供页面）。用 `Get-NetTCPConnection -LocalPort 5173` 找到 PID，确认命令行是本仓库的 vite 后再停。
 - **本地后端 AI "unavailable"**：`dotnet run --no-launch-profile` 不设环境，默认 Production，不加载 user-secrets，日志里是 "DeepSeek API key is not configured"。加 `ASPNETCORE_ENVIRONMENT=Development`。
 - **跑后端测试前先停掉本地后端**：`dotnet run` 的进程锁着 `bin/Debug/net10.0/backend.exe`，`dotnet test` 构建会失败（MSB3027）。
+- **Playwright 截暗色主题**：主题是皮肤（`data-theme` 由已装备的皮肤决定，Users 表里没有主题列）。`add_init_script` 设 `data-theme` 没用（太早，文档还没建好），要在页面加载后 `page.evaluate` 设置，再用 MutationObserver 防止应用改回去。
 - **前端测试要在 PowerShell 里跑**：在 Git Bash 里 `npm test` 报 "Vitest failed to find the runner"（全部失败，不是代码问题）。
 - **EF Core 的 `ExecuteDeleteAsync`** 内存测试库不支持；需要在测试里跑到的代码改用加载后 `RemoveRange`。
 
@@ -360,7 +369,7 @@ Phase 2 的 `msa-backend` / `msa-frontend` 和它的 `neondb` 库**保持不动*
 - [ ] 设备上的 Wi-Fi 列表加"其他网络…"，可以手动输入隐藏网络的名字；确认仅 WPA3 的网络能否连接
 - [ ] 后端最小副本 0 → 冷启动 20–30 秒，可能导致长时间闲置后的第一次上传超时；决定是否改为 1
 - [ ] 舵机堵转保护（官方固件有）
-- [ ] 与现有功能联动：~~Dashboard 摄入~~（D-21）、~~Dashboard 净热量~~（D-23）、AI 助手读取摄入数据、积分（用户说暂缓）
+- [ ] 与现有功能联动：~~Dashboard 摄入~~（D-21）、~~Dashboard 净热量~~（D-23）、~~AI 助手读取摄入数据~~（D-36）、积分（用户说暂缓）
 - [x] 串口日志被 `cam_hal: EV-EOF-OVF` 刷屏 —— 固件里关不掉（见"踩过的坑"），改用 `tools/serial_log.py` 过滤
 - [ ] 秤的玩法：饭后称剩菜（按差值记实际吃掉的量）；一盘逐个加食物（按重量差分别识别）
 - [ ] 设备上的摄入圆环只在上传/账号检查时更新，网页改动要碰一下设备才显示（D-21，目前可接受）

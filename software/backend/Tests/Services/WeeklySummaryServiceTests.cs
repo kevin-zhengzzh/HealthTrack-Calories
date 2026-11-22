@@ -49,7 +49,7 @@ public class WeeklySummaryServiceTests
     }
 
     [Fact]
-    public async Task NoWorkoutsLastWeek_ReturnsFallbackWithoutCallingTheModel()
+    public async Task NothingLoggedLastWeek_ReturnsFallbackWithoutCallingTheModel()
     {
         var model = new FakeChatModel();   // throws if called
         var service = new WeeklySummaryService(NewDb(), model);
@@ -87,6 +87,46 @@ public class WeeklySummaryServiceTests
         Assert.Equal(300, s.GetProperty("previousWeekCalories").GetInt32());
         Assert.Equal(2, s.GetProperty("checkInDays").GetInt32());
         Assert.Equal(2, s.GetProperty("byType").GetProperty("Running").GetProperty("count").GetInt32());
+    }
+
+    [Fact]
+    public async Task MealsOnly_StillGetASummary_WithIntakeStatsOverLoggedDays()
+    {
+        var db = NewDb();
+        db.Users.Find(Me)!.WeeklyIntakeGoal = 1800 * 7;
+        db.IntakeRecords.AddRange(
+            new IntakeRecord { UserId = Me, FoodName = "Rice", Calories = 1500, Date = LastMonday },
+            new IntakeRecord { UserId = Me, FoodName = "Cake", Calories = 600, Date = LastMonday },
+            new IntakeRecord { UserId = Me, FoodName = "Soup", Calories = 1500, Date = LastMonday.AddDays(4) },
+            new IntakeRecord { UserId = Me, FoodName = "Toast", Calories = 1000, Date = LastMonday.AddDays(-2) },   // week before
+            new IntakeRecord { UserId = SomeoneElse, FoodName = "Pizza", Calories = 9000, Date = LastMonday });
+        db.SaveChanges();
+        var model = new FakeChatModel().Returns(FakeChatModel.Text("You logged meals on 2 days."));
+
+        var result = await new WeeklySummaryService(db, model).GetAsync(Me, Today);
+
+        Assert.Equal(WeeklySummaryService.SourceAi, result.Source);
+        var request = Assert.Single(model.Requests);
+        Assert.Contains("logged meals", request.Messages[0].Content);
+        using var stats = JsonDocument.Parse(request.Messages[1].Content!);
+        var m = stats.RootElement.GetProperty("meals");
+        Assert.Equal(2, m.GetProperty("daysWithMeals").GetInt32());
+        Assert.Equal(3600, m.GetProperty("totalEaten").GetInt32());
+        Assert.Equal(1800, m.GetProperty("avgPerLoggedDay").GetInt32());
+        Assert.Equal(1, m.GetProperty("daysOverGoal").GetInt32());
+        Assert.Equal(1000, m.GetProperty("previousWeekAvgPerLoggedDay").GetInt32());
+        Assert.Equal("Rice", m.GetProperty("topFoods")[0].GetString());
+        Assert.Equal(0, stats.RootElement.GetProperty("workoutCount").GetInt32());
+    }
+
+    [Fact]
+    public async Task WorkoutsOnly_HaveNoMealStats()
+    {
+        var model = new FakeChatModel().Returns(FakeChatModel.Text("ok"));
+        await new WeeklySummaryService(DbWithLastWeekWorkouts(), model).GetAsync(Me, Today);
+
+        using var stats = JsonDocument.Parse(model.Requests[0].Messages[1].Content!);
+        Assert.Equal(JsonValueKind.Null, stats.RootElement.GetProperty("meals").ValueKind);
     }
 
     [Fact]

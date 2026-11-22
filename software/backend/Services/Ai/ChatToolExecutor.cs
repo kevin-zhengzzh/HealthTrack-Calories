@@ -20,6 +20,7 @@ public class ChatToolExecutor
     public const string WeeklyGoalProgress = "get_weekly_goal_progress";
     public const string Rank = "get_rank";
     public const string PointsSummary = "get_points_summary";
+    public const string IntakeSummary = "get_intake_summary";
     public const string PlanContext = "get_plan_context";
     public const string ProposeGoals = "propose_goals";
 
@@ -30,6 +31,8 @@ public class ChatToolExecutor
     private const int LeaderboardSize = 50;
 
     private static readonly string[] Ranges = ["this_week", "last_week", "this_month", "last_month"];
+    // Food is often asked about by the day as well
+    private static readonly string[] IntakeRanges = ["today", "yesterday", .. Ranges];
 
     // Offered when no topic is picked: everything that only reads
     public static readonly IReadOnlyList<ChatToolDefinition> ReadOnlyDefinitions =
@@ -55,6 +58,15 @@ public class ChatToolExecutor
         new(PointsSummary,
             "Get the user's points balance, points earned and spent in the last 7 days, the most recent point transactions, and today's rewards that haven't been claimed yet.",
             Schema(new { type = "object", properties = new { }, additionalProperties = false })),
+        new(IntakeSummary,
+            "Get the food the user logged (calories eaten) for a date range: total, days with meals logged, average per logged day (unlogged days are not counted as zero), each day's total, the daily intake goal and the top foods. Weeks start on Monday.",
+            Schema(new
+            {
+                type = "object",
+                properties = new { range = new { type = "string", @enum = IntakeRanges } },
+                required = new[] { "range" },
+                additionalProperties = false,
+            })),
         new(PlanContext,
             $"Get what a plan needs: the user's current daily intake goal and weekly burn (workout) goal, their body details, their estimated base burn (kcal a day without workouts), and their averages over the last {PlanLookbackDays} days (food eaten per logged day, workout calories per week).",
             Schema(new { type = "object", properties = new { }, additionalProperties = false })),
@@ -115,6 +127,7 @@ public class ChatToolExecutor
             WeeklyGoalProgress => await GetWeeklyGoalProgress(userId, today, ct),
             Rank => await GetRank(userId, today, ct),
             PointsSummary => await GetPointsSummary(userId, today, ct),
+            IntakeSummary => await GetIntakeSummary(userId, today, args, ct),
             PlanContext => await GetPlanContext(userId, today, ct),
             ProposeGoals => await CheckProposal(userId, args, ct),
             _ => new { error = $"Unknown tool: {call.Name}" },
@@ -310,6 +323,50 @@ public class ChatToolExecutor
                 amount = p.Amount,
                 date = DateOnly.FromDateTime(p.CreatedAt),
             }),
+        };
+    }
+
+    private async Task<object> GetIntakeSummary(int userId, DateOnly today, JsonElement args, CancellationToken ct)
+    {
+        var range = args.ValueKind == JsonValueKind.Object && args.TryGetProperty("range", out var r) && r.ValueKind == JsonValueKind.String
+            ? r.GetString()
+            : null;
+        if (range is null || !IntakeRanges.Contains(range))
+            return new { error = $"range must be one of: {string.Join(", ", IntakeRanges)}" };
+
+        var (from, to) = range switch
+        {
+            "today" => (today, today),
+            "yesterday" => (today.AddDays(-1), today.AddDays(-1)),
+            _ => ResolveRange(range, today),
+        };
+        var meals = await _db.IntakeRecords
+            .Where(m => m.UserId == userId && m.Date >= from && m.Date <= to)
+            .Select(m => new { m.Date, m.FoodName, m.Calories })
+            .ToListAsync(ct);
+        var weeklyGoal = await _db.Users.Where(u => u.Id == userId).Select(u => u.WeeklyIntakeGoal).FirstOrDefaultAsync(ct);
+
+        var days = meals.GroupBy(m => m.Date).OrderBy(g => g.Key)
+            .Select(g => new { date = g.Key, calories = g.Sum(m => m.Calories), meals = g.Count() })
+            .ToList();
+        return new
+        {
+            range,
+            from,
+            to,
+            mealCount = meals.Count,
+            daysWithMeals = days.Count,
+            totalEaten = meals.Sum(m => m.Calories),
+            avgPerLoggedDay = days.Count > 0 ? (int)Math.Round(days.Average(d => d.calories)) : (int?)null,
+            dailyIntakeGoal = Goals.PerDay(weeklyGoal),
+            days,
+            // Uploads the model couldn't name yet have no calories
+            unnamedMeals = meals.Count(m => m.FoodName == string.Empty),
+            topFoods = meals.Where(m => m.FoodName != string.Empty)
+                .GroupBy(m => m.FoodName.Trim().ToLowerInvariant())
+                .OrderByDescending(g => g.Sum(m => m.Calories))
+                .Take(5)
+                .Select(g => new { name = g.First().FoodName.Trim(), count = g.Count(), calories = g.Sum(m => m.Calories) }),
         };
     }
 

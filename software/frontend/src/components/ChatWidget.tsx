@@ -6,8 +6,8 @@ import type { ChatQuota, ChatTurn, GoalProposal } from '../types'
 import { useGoals } from '../goals'
 
 // AI chat assistant (specs/06-ai-features-spec.md §5.1, §5.3). A floating button in
-// the same right-hand column as RecordButton (bottom-6) and BackToTopButton
-// (bottom-24), one step above them so it never overlaps either (CA-1).
+// the right-hand column: RecordButton (+) at bottom-6, this at bottom-24, and
+// BackToTopButton on top at bottom-42 — that one only after scrolling down.
 
 const MAX_MESSAGE_LENGTH = 1000 // matches ChatAssistantService.MaxMessageLength
 const MAX_HISTORY_TURNS = 20 // CA-7; the server caps it too
@@ -40,6 +40,7 @@ const TOOL_LABELS: Record<string, string> = {
   get_weekly_goal_progress: 'Checking your weekly goal…',
   get_rank: 'Checking the leaderboards…',
   get_points_summary: 'Checking your points…',
+  get_intake_summary: 'Checking your meals…',
   get_plan_context: 'Looking at your goals and history…',
   propose_goals: 'Preparing a plan…',
 }
@@ -258,7 +259,7 @@ export default function ChatWidget() {
         onClick={() => setOpen(true)}
         aria-label="Open AI assistant"
         title="Ask the AI assistant"
-        className="fixed bottom-42 right-4 w-12 h-12 flex items-center justify-center text-white rounded-full shadow-lg transition-transform active:scale-95 cursor-pointer z-30"
+        className="fixed bottom-24 right-4 w-12 h-12 flex items-center justify-center text-white rounded-full shadow-lg transition-transform active:scale-95 cursor-pointer z-30"
         style={{ backgroundColor: 'var(--primary)' }}
         onMouseEnter={(e) => (e.currentTarget.style.backgroundColor = 'var(--primary-hover)')}
         onMouseLeave={(e) => (e.currentTarget.style.backgroundColor = 'var(--primary)')}
