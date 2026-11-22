@@ -239,6 +239,7 @@ Phase 2 的 `msa-backend` / `msa-frontend` 和它的 `neondb` 库**保持不动*
 - **决定**：共用 `components/HistoryParts.tsx`（`GroupCard` 卡片标题 + 右侧合计、`Row` 64px 方块 + 名称 + 灰色明细 + 右侧数字 + 图标按钮、`Modal`、`SearchBox`、`ShowMore`）和 `historyFormat.ts`（日期格式、分组、模糊搜索、按钮样式）。Food Log 和 Workouts 每天一张卡片、都有搜索；Check-ins 一天只有一条，所以按月一张卡片。分页器改成 "Show older days/months"（每次 10 张卡片）。
 - Food Log 顶部的 "Eaten today + 目标" 卡片删除（目标只在 Plan 设，首页已显示今天的进度）。
 - **积分记录**也成为 History 的第 4 个标签 **Points**（`/history/points`），同样每天一张卡片（获得绿色、花费红色），顶部显示余额；右上角用户菜单里的 Points 一行改为跳到这个标签（原来的弹窗 `PointsHistoryModal` 删除）。
+- **修订（同日）**：用户菜单里的 Points 一行整个去掉（用户要求）；余额在首页 Points 卡片和 History → Points 标签里都能看到。菜单现在是头像/用户名、Store、Sign out。
 
 ### D-32 首页两张卡片加 Today / This week 切换（2026-11-22）
 - **决定**：两张卡片上方一个共用的切换（记在浏览器 localStorage）。This week = 本周一到今天：圆环整圈 = 每周目标，每条记录一段；"还差/超出"按每周目标；基础消耗 × 本周已过天数。圆环下方列出该时段的记录（本周时带星期几）。净热量横幅始终是今天。
