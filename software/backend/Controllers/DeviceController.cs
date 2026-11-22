@@ -32,7 +32,7 @@ public class DeviceController : ControllerBase
             .Where(d => d.UserId == UserId && d.RevokedAt == null)
             .OrderBy(d => d.CreatedAt)
             .Select(d => new DeviceDto(d.Id, d.Name, d.KeyPrefix, d.CreatedAt, d.LastSeenAt,
-                d.KeyHash.StartsWith("pending-")))
+                d.KeyHash.StartsWith("pending-"), d.FirmwareVersion, d.WifiRssi, d.ScaleConnected, d.PendingUploads, d.StatusAt))
             .ToListAsync();
         return Ok(devices);
     }
@@ -53,6 +53,7 @@ public class DeviceController : ControllerBase
             return Unauthorized(new { message = "Unknown or revoked device key." });
 
         device.LastSeenAt = DateTime.UtcNow;
+        DeviceStatus.Apply(device, HttpContext?.Request.Headers, device.LastSeenAt.Value);
         await _db.SaveChangesAsync();
         var user = await _db.Users.Where(u => u.Id == device.UserId)
             .Select(u => new { u.Username, u.WeeklyIntakeGoal }).FirstAsync();

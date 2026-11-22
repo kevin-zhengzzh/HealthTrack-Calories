@@ -110,6 +110,9 @@ namespace backend.Migrations
                     b.Property<DateTime>("CreatedAt")
                         .HasColumnType("timestamp with time zone");
 
+                    b.Property<string>("FirmwareVersion")
+                        .HasColumnType("text");
+
                     b.Property<string>("HardwareId")
                         .HasColumnType("text");
 
@@ -128,10 +131,22 @@ namespace backend.Migrations
                         .IsRequired()
                         .HasColumnType("text");
 
+                    b.Property<int?>("PendingUploads")
+                        .HasColumnType("integer");
+
                     b.Property<DateTime?>("RevokedAt")
                         .HasColumnType("timestamp with time zone");
 
+                    b.Property<bool?>("ScaleConnected")
+                        .HasColumnType("boolean");
+
+                    b.Property<DateTime?>("StatusAt")
+                        .HasColumnType("timestamp with time zone");
+
                     b.Property<int>("UserId")
+                        .HasColumnType("integer");
+
+                    b.Property<int?>("WifiRssi")
                         .HasColumnType("integer");
 
                     b.HasKey("Id");

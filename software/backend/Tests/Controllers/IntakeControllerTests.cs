@@ -84,6 +84,83 @@ public class IntakeControllerTests
         _ => throw new InvalidOperationException(result.GetType().Name),
     };
 
+    // ---- Offline queue: capture time, de-duplication, device status ----
+
+    private static long Unix(DateTime t) => new DateTimeOffset(t).ToUnixTimeSeconds();
+
+    [Fact]
+    public async Task Upload_SavedOffline_IsLoggedAtItsCaptureTimeAndDay()
+    {
+        using var db = NewDb();
+        var taken = DateTime.UtcNow.AddDays(-3).AddSeconds(-DateTime.UtcNow.Second);
+        taken = new DateTime(taken.Ticks - taken.Ticks % TimeSpan.TicksPerSecond, DateTimeKind.Utc);
+        var localDay = DateOnly.FromDateTime(taken).AddDays(1);   // e.g. NZ, ahead of UTC
+
+        var body = Body<DeviceUploadResult>(await NewController(db, new FakeRecognizer())
+            .UploadFromDevice(MyKey, Jpeg(), 150, localDay.ToString("yyyy-MM-dd"), default, Unix(taken)));
+
+        Assert.True(body.IsFood);
+        var saved = await db.IntakeRecords.SingleAsync();
+        Assert.Equal(taken, saved.CreatedAt);
+        Assert.Equal(localDay, saved.Date);   // three days back: not clamped to today
+    }
+
+    [Fact]
+    public async Task Upload_Retried_WithTheSameCaptureTime_IsNotLoggedTwice()
+    {
+        using var db = NewDb();
+        var recognizer = new FakeRecognizer();
+        var taken = Unix(DateTime.UtcNow.AddMinutes(-10));
+
+        var first = Body<DeviceUploadResult>(await NewController(db, recognizer).UploadFromDevice(MyKey, Jpeg(), 150, null, default, taken));
+        var again = Body<DeviceUploadResult>(await NewController(db, recognizer).UploadFromDevice(MyKey, Jpeg(), 150, null, default, taken));
+
+        Assert.Equal(first.Id, again.Id);
+        Assert.Equal(134, again.Calories);
+        Assert.Single(db.IntakeRecords);
+        Assert.Equal(1, recognizer.Calls);   // no second paid recognition
+    }
+
+    [Theory]
+    [InlineData(-20)]     // older than two weeks
+    [InlineData(1)]       // a day in the future
+    public async Task Upload_WithAnImplausibleCaptureTime_UsesNow(int days)
+    {
+        using var db = NewDb();
+        await NewController(db, new FakeRecognizer()).UploadFromDevice(MyKey, Jpeg(), 150, null, default, Unix(DateTime.UtcNow.AddDays(days)));
+        Assert.True((DateTime.UtcNow - (await db.IntakeRecords.SingleAsync()).CreatedAt).Duration() < TimeSpan.FromMinutes(1));
+    }
+
+    [Fact]
+    public async Task Upload_RecordsTheStatusTheDeviceReports()
+    {
+        using var db = NewDb();
+        var c = NewController(db, new FakeRecognizer());
+        var h = c.ControllerContext.HttpContext.Request.Headers;
+        h["X-Firmware"] = "0.6.0";
+        h["X-Wifi-Rssi"] = "-71";
+        h["X-Scale"] = "1";
+        h["X-Queued"] = "2";
+
+        await c.UploadFromDevice(MyKey, Jpeg(), 150, null, default);
+
+        var d = await db.Devices.SingleAsync();
+        Assert.Equal(("0.6.0", -71, true, 2), (d.FirmwareVersion, d.WifiRssi!.Value, d.ScaleConnected!.Value, d.PendingUploads!.Value));
+        Assert.NotNull(d.StatusAt);
+    }
+
+    [Fact]
+    public void DeviceStatus_IgnoresNonsense()
+    {
+        var d = new Device();
+        var h = new HeaderDictionary { ["X-Wifi-Rssi"] = "40", ["X-Scale"] = "yes", ["X-Queued"] = "-1" };
+        DeviceStatus.Apply(d, h, DateTime.UtcNow);
+        Assert.Null(d.WifiRssi);
+        Assert.Null(d.ScaleConnected);
+        Assert.Null(d.PendingUploads);
+        Assert.Null(d.StatusAt);
+    }
+
     [Fact]
     public async Task Upload_ComputesCaloriesFromWeight_AndSavesForDeviceOwner()
     {
