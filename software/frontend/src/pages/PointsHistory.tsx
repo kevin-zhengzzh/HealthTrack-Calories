@@ -9,6 +9,8 @@ import { formatDay, formatTime, groupBy, GROUPS_PER_PAGE } from '../historyForma
 // The Points tab of History: points earned (check-ins, workouts) and spent
 // (skins), a card per day like the Food Log. Opened from the user menu too.
 const SPEND_COLOR = '#dc2626'
+// Translucent, so it works on the light and the dark theme alike
+const SPEND_TILE = 'rgba(220, 38, 38, 0.15)'
 
 function icon(reason: string) {
   if (reason.startsWith('Daily check-in')) return '✓'
@@ -57,7 +59,7 @@ export default function PointsHistory() {
               <Row
                 key={t.id}
                 tile={
-                  <Tile color={t.amount < 0 ? '#fee2e2' : 'var(--primary-light)'}>
+                  <Tile color={t.amount < 0 ? SPEND_TILE : 'var(--primary-light)'}>
                     <span style={{ color: t.amount < 0 ? SPEND_COLOR : 'var(--primary-text)' }}>{icon(t.reason)}</span>
                   </Tile>
                 }

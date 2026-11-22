@@ -1,5 +1,5 @@
 import { useEffect } from 'react'
-import { BrowserRouter, Link, Navigate, Route, Routes, useLocation, useNavigate } from 'react-router-dom'
+import { BrowserRouter, Link, Navigate, Route, Routes, useLocation } from 'react-router-dom'
 import { useStore } from './store'
 import { claimRewards, getMe, getSkins, getTodayRewards, getTodayStatus, updateUsername, uploadAvatar } from './api'
 import Sidebar from './components/Sidebar'
@@ -59,7 +59,7 @@ const NAV_TABS = [
   { to: '/rank', label: 'Rank', icon: RankIcon, isActive: (p: string) => p === '/rank' },
 ]
 
-function NavBar({ onOpenStore, onOpenPoints }: { onOpenStore: () => void; onOpenPoints: () => void }) {
+function NavBar({ onOpenStore }: { onOpenStore: () => void }) {
   const { username, user, cachedAvatarUrl, skins, rewardStatus, setUser, setUsername, setRewardStatus, pushToast, clearAuth, bumpLeaderboardRefresh } = useStore()
   const location = useLocation()
   const activeTabIndex = NAV_TABS.findIndex((t) => t.isActive(location.pathname))
@@ -147,11 +147,9 @@ function NavBar({ onOpenStore, onOpenPoints }: { onOpenStore: () => void; onOpen
           <DailyTasksMenu rewardStatus={rewardStatus} onClaim={handleClaim} />
           <UserMenu
             username={username}
-            points={user?.points ?? null}
             avatarUrl={user?.avatarUrl ?? cachedAvatarUrl}
             hasStoreNotification={hasStoreNotification}
             onOpenStore={onOpenStore}
-            onOpenPoints={onOpenPoints}
             onAvatarUpload={handleAvatarUpload}
             onUpdateUsername={handleUsernameChange}
             onSignOut={clearAuth}
@@ -165,7 +163,6 @@ function NavBar({ onOpenStore, onOpenPoints }: { onOpenStore: () => void; onOpen
 function PrivateLayout() {
   const { token, user, setUser, setTheme, storeOpen, setStoreOpen, setSkins, setRewardStatus, setCheckedInToday } = useStore()
   const location = useLocation()
-  const navigate = useNavigate()
 
   // Hooks must be called before any conditional return
   useEffect(() => {
@@ -198,7 +195,7 @@ function PrivateLayout() {
 
   return (
     <div className="min-h-screen bg-[var(--bg-page)]">
-      <NavBar onOpenStore={() => setStoreOpen(true)} onOpenPoints={() => navigate('/history/points')} />
+      <NavBar onOpenStore={() => setStoreOpen(true)} />
       <div className="pt-14">
         <div className="max-w-7xl mx-auto px-4 py-6 lg:py-8 flex flex-col lg:flex-row gap-6 lg:gap-10 items-stretch lg:items-start">
           {showSidebar && <Sidebar />}

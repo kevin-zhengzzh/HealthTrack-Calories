@@ -5,21 +5,17 @@ import PersonIcon from './PersonIcon'
 
 export default function UserMenu({
   username,
-  points,
   avatarUrl,
   hasStoreNotification,
   onOpenStore,
-  onOpenPoints,
   onAvatarUpload,
   onUpdateUsername,
   onSignOut,
 }: {
   username: string | null
-  points: number | null
   avatarUrl: string | null
   hasStoreNotification: boolean
   onOpenStore: () => void
-  onOpenPoints: () => void
   onAvatarUpload: (file: File) => void
   onUpdateUsername: (username: string) => Promise<void>
   onSignOut: () => void
@@ -183,18 +179,9 @@ export default function UserMenu({
               <span className="absolute top-1 right-2 w-1.5 h-1.5 rounded-full bg-red-500" />
             )}
           </button>
-          {points != null && (
-            <button
-              onClick={() => { onOpenPoints(); setOpen(false) }}
-              className="w-full px-4 py-2 flex items-center justify-between text-[var(--text-muted)] border-t border-b border-[var(--border-subtle)] hover:bg-[var(--bg-inset)] cursor-pointer"
-            >
-              <span>Points</span>
-              <span className="font-semibold" style={{ color: 'var(--primary-text)' }}>{points}</span>
-            </button>
-          )}
           <button
             onClick={() => setConfirmingSignOut(true)}
-            className="w-full text-left px-4 py-2 hover:bg-[var(--bg-inset)] cursor-pointer"
+            className="w-full text-left px-4 py-2 border-t border-[var(--border-subtle)] hover:bg-[var(--bg-inset)] cursor-pointer"
           >
             Sign out
           </button>

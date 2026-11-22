@@ -29,7 +29,7 @@ public class ChatAssistantService
     // §9 — kept verbatim in the spec; update both together
     private const string SystemPrompt =
         "You are the HealthTrack assistant. You help the signed-in user understand their own workouts, " +
-        "check-ins, streaks, goals, leaderboard ranks and points in this app. Whenever an answer depends on the user's data, call the " +
+        "meals (calories eaten), check-ins, streaks, goals, leaderboard ranks and points in this app. Whenever an answer depends on the user's data, call the " +
         "relevant tool first — even for follow-up questions and even if earlier messages mention numbers, " +
         "because data can change and earlier replies may be incomplete. Never guess or invent numbers. " +
         "Call tools directly without announcing that you are about to look something up. " +

@@ -238,11 +238,46 @@ public class ChatToolExecutorTests
     {
         Assert.Equal(
             [ChatToolExecutor.WorkoutSummary, ChatToolExecutor.CheckInStatus, ChatToolExecutor.WeeklyGoalProgress,
-             ChatToolExecutor.Rank, ChatToolExecutor.PointsSummary, ChatToolExecutor.PlanContext, ChatToolExecutor.ProposeGoals],
+             ChatToolExecutor.Rank, ChatToolExecutor.PointsSummary, ChatToolExecutor.IntakeSummary, ChatToolExecutor.PlanContext,
+             ChatToolExecutor.ProposeGoals],
             ChatToolExecutor.Definitions.Select(d => d.Name));
         Assert.Equal(
             ChatToolExecutor.Definitions.Select(d => d.Name).Where(n => n != ChatToolExecutor.ProposeGoals),
             ChatToolExecutor.ReadOnlyDefinitions.Select(d => d.Name));
+    }
+
+    // ---- Intake ----
+
+    [Fact]
+    public async Task IntakeSummary_TotalsTheRange_AveragesLoggedDaysOnly_AndIgnoresOtherUsers()
+    {
+        var db = NewDb();
+        db.Users.Find(Me)!.WeeklyIntakeGoal = 2000 * 7;
+        db.IntakeRecords.AddRange(
+            new IntakeRecord { UserId = Me, FoodName = "Rice", Calories = 600, Date = Today },
+            new IntakeRecord { UserId = Me, FoodName = "rice", Calories = 400, Date = Today },
+            new IntakeRecord { UserId = Me, FoodName = "Apple", Calories = 100, Date = Today.AddDays(-2) },   // Monday
+            new IntakeRecord { UserId = Me, FoodName = "", Calories = 0, Date = Today.AddDays(-2) },
+            new IntakeRecord { UserId = Me, FoodName = "Cake", Calories = 900, Date = Today.AddDays(-3) },    // last week
+            new IntakeRecord { UserId = SomeoneElse, FoodName = "Pizza", Calories = 999, Date = Today });
+        await db.SaveChangesAsync();
+        var (executor, _) = NewExecutor(db);
+
+        var week = await Run(executor, ChatToolExecutor.IntakeSummary, """{"range":"this_week"}""");
+        Assert.Equal(1100, week.GetProperty("totalEaten").GetInt32());
+        Assert.Equal(2, week.GetProperty("daysWithMeals").GetInt32());
+        Assert.Equal(550, week.GetProperty("avgPerLoggedDay").GetInt32());
+        Assert.Equal(2000, week.GetProperty("dailyIntakeGoal").GetInt32());
+        Assert.Equal(1, week.GetProperty("unnamedMeals").GetInt32());
+        var top = week.GetProperty("topFoods")[0];
+        Assert.Equal((1000, 2), (top.GetProperty("calories").GetInt32(), top.GetProperty("count").GetInt32()));
+
+        var today = await Run(executor, ChatToolExecutor.IntakeSummary, """{"range":"today"}""");
+        Assert.Equal(1000, today.GetProperty("totalEaten").GetInt32());
+
+        var none = await Run(executor, ChatToolExecutor.IntakeSummary, """{"range":"yesterday"}""");
+        Assert.Equal(JsonValueKind.Null, none.GetProperty("avgPerLoggedDay").ValueKind);
+        Assert.True((await Run(executor, ChatToolExecutor.IntakeSummary, """{"range":"forever"}""")).TryGetProperty("error", out _));
     }
 
     // ---- Plan tools ----
