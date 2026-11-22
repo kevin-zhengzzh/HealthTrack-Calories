@@ -154,7 +154,9 @@ export default function Landing() {
       </section>
 
       <footer className="px-6 py-6 text-center text-xs text-[var(--text-muted)] border-t border-[var(--border-subtle)]">
-        © {new Date().getFullYear()} HealthTrack
+        © {new Date().getFullYear()} HealthTrack ·{' '}
+        Estimates only, not medical advice ·{' '}
+        <Link to="/disclaimer" className="underline">Disclaimer</Link>
       </footer>
     </div>
   )

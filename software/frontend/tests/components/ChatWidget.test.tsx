@@ -1,5 +1,6 @@
 import { render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
+import { MemoryRouter } from 'react-router-dom'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import type { ChatStreamEvent, ChatTurn } from '../../src/types'
 
@@ -23,7 +24,7 @@ function streams(...events: ChatStreamEvent[]) {
 
 async function openWidget() {
   const user = userEvent.setup()
-  render(<ChatWidget />)
+  render(<MemoryRouter><ChatWidget /></MemoryRouter>)
   await user.click(screen.getByRole('button', { name: 'Open AI assistant' }))
   return user
 }

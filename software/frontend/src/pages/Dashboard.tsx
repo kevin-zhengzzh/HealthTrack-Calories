@@ -10,6 +10,8 @@ import TodayBurnCard from '../components/TodayBurnCard'
 import type { Period } from '../components/TodayCard'
 import { localDateStr } from '../intake'
 import InfoTip from '../components/InfoTip'
+import WeeklySummaryCard from '../components/WeeklySummaryCard'
+import { useMediaQuery } from '../hooks/useMediaQuery'
 
 // Devices log meals in the background
 const INTAKE_POLL_MS = 30_000
@@ -36,6 +38,8 @@ function useNow() {
 export default function Dashboard() {
   const { user, setUser, checkedInToday, setCheckedInToday, setRewardStatus, pushToast, setStoreOpen, workoutRefreshKey, intakeRefreshKey } = useStore()
   const now = useNow()
+  // Last week's summary lives under the sidebar on wide screens (Sidebar.tsx)
+  const wide = useMediaQuery('(min-width: 1024px)')
   const [loading, setLoading] = useState(false)
   const [lastResult, setLastResult] = useState<CheckInResult | null>(null)
   const [workoutHistory, setWorkoutHistory] = useState<WorkoutRecord[]>([])
@@ -190,6 +194,8 @@ export default function Dashboard() {
           />
         </div>
       </div>
+
+      {!wide && <WeeklySummaryCard />}
 
     </div>
   )

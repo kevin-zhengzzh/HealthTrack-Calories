@@ -1,4 +1,5 @@
 import { useState } from 'react'
+import LegalFooter from '../components/LegalFooter'
 import { Link, useNavigate } from 'react-router-dom'
 import { login } from '../api'
 import { useStore } from '../store'
@@ -60,6 +61,7 @@ export default function Login() {
           </p>
         </div>
       </div>
+      <LegalFooter />
     </div>
   )
 }

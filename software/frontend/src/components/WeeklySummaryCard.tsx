@@ -16,7 +16,9 @@ function formatRange(start: string, end: string) {
   return `${fmt(start)} – ${fmt(end)}`
 }
 
-export default function WeeklySummaryCard() {
+// compact: the narrow version under the sidebar (range on its own line,
+// smaller padding, long text scrolls inside the card)
+export default function WeeklySummaryCard({ compact = false }: { compact?: boolean }) {
   const [data, setData] = useState<WeeklySummary | null>(null)
   const [failed, setFailed] = useState(false)
   const [attempt, setAttempt] = useState(0)
@@ -31,13 +33,19 @@ export default function WeeklySummaryCard() {
   }, [attempt])
 
   return (
-    <section className="bg-[var(--bg-surface)] rounded-2xl shadow p-6" aria-label="Last week summary">
-      <div className="flex items-center justify-between gap-3 mb-3">
+    <section className={`bg-[var(--bg-surface)] rounded-2xl shadow ${compact ? 'p-4' : 'p-6'}`} aria-label="Last week summary">
+      <div className={`flex justify-between gap-3 mb-3 ${compact ? 'items-start' : 'items-center'}`}>
         <h2 className="font-semibold text-[var(--text-secondary)]">
           Last week
-          {data && <span className="ml-2 text-sm font-normal text-[var(--text-muted)]">{formatRange(data.weekStart, data.weekEnd)}</span>}
+          {data && (
+            <span className={`text-sm font-normal text-[var(--text-muted)] ${compact ? 'block text-xs' : 'ml-2'}`}>
+              {formatRange(data.weekStart, data.weekEnd)}
+              {/* No room for the badge beside the title in the narrow card */}
+              {compact && data.source !== 'fallback' && ' · AI summary'}
+            </span>
+          )}
         </h2>
-        {data && data.source !== 'fallback' && (
+        {!compact && data && data.source !== 'fallback' && (
           <span
             className="text-xs font-medium px-2 py-0.5 rounded-full"
             style={{ backgroundColor: 'var(--primary-light)', color: 'var(--primary-text)' }}
@@ -62,7 +70,7 @@ export default function WeeklySummaryCard() {
           <div className="h-4 w-2/3 rounded bg-[var(--bg-inset)] animate-pulse" />
         </div>
       ) : (
-        <p className={`text-sm leading-relaxed whitespace-pre-line ${data.source === 'fallback' ? 'text-[var(--text-muted)]' : 'text-[var(--text-primary)]'}`}>
+        <p className={`text-sm leading-relaxed whitespace-pre-line ${compact ? 'max-h-[calc(100vh-25rem)] min-h-24 overflow-y-auto pr-1' : ''} ${data.source === 'fallback' ? 'text-[var(--text-muted)]' : 'text-[var(--text-primary)]'}`}>
           {data.summary}
         </p>
       )}
