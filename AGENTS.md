@@ -335,6 +335,7 @@ Phase 2 的 `msa-backend` / `msa-frontend` 和它的 `neondb` 库**保持不动*
 | 2026-11-22 | 修复手机上 Plan 页被整体缩小（`InfoTip` 隐藏的气泡撑宽页面）；所有页面在 375px 下宽度检查通过 |
 | 2026-11-22 | 固件 0.6.0（D-38）：设备状态头、离线暂存补传、HTTPS 证书校验；后端 `takenAt` + 去重 + 迁移 `AddDeviceStatus`（177 个测试）；Device 页状态；已烧录（开机正常，设备处没 Wi-Fi，联网部分待验证） |
 | 2026-11-22 | PR #16 合并部署（`d744aec`）：固件 0.6.0 的后端支持、设备状态、Plan 页手机修复；真机验证 HTTPS 证书校验、离线暂存补传、Device 页状态。存档：下一步用户想研究本地部署 AI（单独的新项目，给本项目调用） |
+| 2026-11-22 | 本地 AI 研究项目 `E:\CodeLearning\LocalAI`（Ollama + Qwen3 8B，模型在 `D:\LocalAI\models`）：HealthTrack 式工具调用测试全过，关思考 4.5 秒/题。本项目**没改代码**；本地后端设 `DeepSeek__BaseUrl=http://localhost:11434/v1` 等即可切过去（见 LocalAI 的 `docs/healthtrack.md`），要关思考需新增可选配置 `DeepSeek:ReasoningEffort`。存档：用户说先不做集成 |
 | 2026-11-21 | 统计/首页改版三步计划的第 1 步：Plan 页 + 目标按周存储（D-24，迁移 `WeeklyIntakeGoal`，共 141 个测试）。第 2 步首页改版、第 3 步统计页（Intake/Burned 切换，自然周/月/年可往回翻，日均只算有记录的天，排行榜） |
 
 ---
