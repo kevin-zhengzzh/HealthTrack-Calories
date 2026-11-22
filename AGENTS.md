@@ -284,7 +284,8 @@ Phase 2 的 `msa-backend` / `msa-frontend` 和它的 `neondb` 库**保持不动*
 - **离线暂存补传**：上传因为没网、服务器 5xx / 超时（冷启动）、每日上限 429、或者还没对时无法 HTTPS 而失败时，把照片 + 重量 + 拍摄时间 + 本地日期存进闪存（LittleFS，`default_16MB.csv` 的 spiffs 分区，`/q/<拍摄时间>-<序号>.jpg/.txt`），最多 10 条；屏幕显示 "Saved for later"、LED 琥珀色。空闲且在线时后台任务（不画屏，一次一个 TLS 连接）按时间顺序补传，失败退避 1 → 30 分钟；4xx 拒绝的直接丢弃；401 回到配对并清空暂存（属于原账号）。**没网时不再等**：重量稳定就拍照存起来（原来是一直等 Wi-Fi）。主画面 Ready 一行显示 "2 meals waiting to upload / saved offline"。
 - **后端**：`POST /api/intake/device` 新增可选 `takenAt`（Unix 秒）：两周内、不超过未来 5 分钟时，记录的 CreatedAt 用它，日期用设备给的本地日期（与拍摄时间的 UTC 日期相差 ≤1 天才接受，否则用 UTC 日期）——补传的旧餐不会被 `ResolveToday` 夹到今天。**去重**：同一设备、同一 `takenAt` 已有记录时直接返回那条（不重复记录、不再花钱识别）——第一次上传超时但服务器其实已存的情况。所有上传都带 `takenAt`，所以第一次和重试能对上。
 - **HTTPS**：`beginHttp` 不再 `setInsecure()`，改为 `setCACert(ROOT_CA)`（`include/root_ca.h`：DigiCert Global Root G2——当前链 Microsoft TLS G2 RSA CA OCSP 16 → Microsoft TLS RSA Root G2（交叉签名）→ 它；另带 Microsoft RSA Root CA 2017、DigiCert Global Root CA 以防 Azure 换证书；来自 certifi，`openssl s_client -CAfile` 验证通过）。证书校验要正确时间：未对时最多等 5 秒，仍未对时不发 HTTPS（上传进暂存）。**换后端域名或 Azure 换 CA 时要更新 root_ca.h**，否则设备连不上（症状：串口 "HTTPS" / 所有请求 -1）。
-- **待真机验证**（烧录时设备处没有可用 Wi-Fi）：联网后账号检查 200（证书校验通过）；断网称重 → Saved for later → 联网后约 1 分钟补传、Food Log 里是原来的时间；Device 页状态（需后端部署后）。
+- **真机验证（2026-11-22，PR #16 部署后）**：联网后账号检查 200（证书校验通过）；关热点称了两次 → 都存进闪存、中途重启没丢 → 开热点后按顺序补传，两次都 200；Device 页显示 "Firmware 0.6.0 · Wi-Fi strong (−31 dBm) · Scale connected"。补传那次后端还是旧版，所以记录时间是补传时间；之后补传的会用拍摄时间（未再验证）。
+- **已知问题（未修，用户说先不改）**：补传的照片如果被判定为"不是食物"，服务器返回 200 + isFood=false、什么都不记，设备也不提示——那条就悄悄没了（测试时两条只记上一条，最可能就是这个原因；补传任务只打印状态码、没打印回复，无法确认）。可选的修法：①补传时打印回复 + 主画面提示 "1 saved photo wasn't recognised as food"；②补传的非食物照片存成 Unnamed food 让用户自己处理（会放宽 D-05）。
 
 ### D-14 部署工作流暂时只能手动触发（2026-11-18；2026-11-19 已恢复自动部署）
 - **决定**：`deploy.yml` 只保留 `workflow_dispatch`。
@@ -333,6 +334,7 @@ Phase 2 的 `msa-backend` / `msa-frontend` 和它的 `neondb` 库**保持不动*
 | 2026-11-22 | 网页拍照记一餐（D-37，迁移 `AddIntakeSource`）；后端 171 / 前端 57 个测试；本地用真实 Claude 端到端验证 |
 | 2026-11-22 | 修复手机上 Plan 页被整体缩小（`InfoTip` 隐藏的气泡撑宽页面）；所有页面在 375px 下宽度检查通过 |
 | 2026-11-22 | 固件 0.6.0（D-38）：设备状态头、离线暂存补传、HTTPS 证书校验；后端 `takenAt` + 去重 + 迁移 `AddDeviceStatus`（177 个测试）；Device 页状态；已烧录（开机正常，设备处没 Wi-Fi，联网部分待验证） |
+| 2026-11-22 | PR #16 合并部署（`d744aec`）：固件 0.6.0 的后端支持、设备状态、Plan 页手机修复；真机验证 HTTPS 证书校验、离线暂存补传、Device 页状态。存档：下一步用户想研究本地部署 AI（单独的新项目，给本项目调用） |
 | 2026-11-21 | 统计/首页改版三步计划的第 1 步：Plan 页 + 目标按周存储（D-24，迁移 `WeeklyIntakeGoal`，共 141 个测试）。第 2 步首页改版、第 3 步统计页（Intake/Burned 切换，自然周/月/年可往回翻，日均只算有记录的天，排行榜） |
 
 ---
@@ -394,7 +396,7 @@ Phase 2 的 `msa-backend` / `msa-frontend` 和它的 `neondb` 库**保持不动*
 - [ ] 秤的玩法：饭后称剩菜（按差值记实际吃掉的量）；一盘逐个加食物（按重量差分别识别）
 - [ ] 设备上的摄入圆环只在上传/账号检查时更新，网页改动要碰一下设备才显示（D-21，目前可接受）
 - [ ] README 补充智能秤功能说明
-- [ ] 识别失败（或误判为非食物）的照片是否要保留供人工确认
+- [ ] 识别失败（或误判为非食物）的照片是否要保留供人工确认——补传时尤其明显，见 D-38 的"已知问题"
 - [x] **Statistics 页下面两块挪走**（2026-11-22 已完成，见 D-35）（2026-11-22 用户提出）："Last week" AI 周总结和签到热力图不跟随页面的周/月/年和 Intake/Burned 切换，放在统计页里显得不搭。我的初步想法（未定）：签到热力图 → History → Check-ins 标签顶部（本来就是签到记录，热力图自带月/年切换）；AI 周总结 → 首页底部，或者做成 AI 助手里"上周回顾"的内容，或单独放进侧边栏。做之前和用户确认放哪里。
 - [x] **右下角 + 按钮改交互**（2026-11-22 已完成，见 D-35）（2026-11-22 用户提出）：鼠标**悬停**就**向左**横向弹出 Add meal / Record workout 两个按钮（现在是点击后向上弹出，会盖住上面的"回到顶部"按钮）。手机上没有悬停，仍然点击展开。
 - [x] **Add meal 弹窗加设备入口和说明**（2026-11-22 已完成，见 D-35）（2026-11-22 用户提出）：例如 "Have a Stack-chan scale? Weigh food on it and it's logged with a photo automatically — pair it on the Device page →"，说明手动添加和秤自动记录的区别（手动没有照片，热量 = 克数 × kcal/100g）。
