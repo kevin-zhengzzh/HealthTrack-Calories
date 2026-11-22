@@ -324,6 +324,7 @@ Phase 2 的 `msa-backend` / `msa-frontend` 和它的 `neondb` 库**保持不动*
 | 2026-11-22 | 4 项待办完成（D-35）：周总结进侧边栏、热力图进 Check-ins、+ 悬停横向展开、Add meal 说明、免责说明页和各处提醒；前端 57 个测试，本地截图检查了宽屏、手机、注册页和说明页 |
 | 2026-11-22 | AI 看饮食、周总结写饮食、悬浮按钮重排、暗色检查（D-36）；后端 167 / 前端 51 个测试（删了 Pagination 的 6 个） |
 | 2026-11-22 | 网页拍照记一餐（D-37，迁移 `AddIntakeSource`）；后端 171 / 前端 57 个测试；本地用真实 Claude 端到端验证 |
+| 2026-11-22 | 修复手机上 Plan 页被整体缩小（`InfoTip` 隐藏的气泡撑宽页面）；所有页面在 375px 下宽度检查通过 |
 | 2026-11-21 | 统计/首页改版三步计划的第 1 步：Plan 页 + 目标按周存储（D-24，迁移 `WeeklyIntakeGoal`，共 141 个测试）。第 2 步首页改版、第 3 步统计页（Intake/Burned 切换，自然周/月/年可往回翻，日均只算有记录的天，排行榜） |
 
 ---
@@ -361,6 +362,7 @@ Phase 2 的 `msa-backend` / `msa-frontend` 和它的 `neondb` 库**保持不动*
 - **跑后端测试前先停掉本地后端**：`dotnet run` 的进程锁着 `bin/Debug/net10.0/backend.exe`，`dotnet test` 构建会失败（MSB3027）。
 - **Playwright 截暗色主题**：主题是皮肤（`data-theme` 由已装备的皮肤决定，Users 表里没有主题列）。`add_init_script` 设 `data-theme` 没用（太早，文档还没建好），要在页面加载后 `page.evaluate` 设置，再用 MutationObserver 防止应用改回去。
 - **Playwright 按钮名默认是子串匹配**：`get_by_role('button', name='Add')` 同时匹配 "+ Add meal" 和 "Add a meal or workout"，严格模式报错；要加 `exact=True`。另外 multipart 请求的 `post_data_buffer` 取不到大小（是 0），要看上传多大去查数据库里的 `length("ImageData")`。
+- **隐藏但仍占布局的元素会把手机页面撑宽**：`InfoTip` 原来用 `invisible`（visibility: hidden）藏气泡，气泡还在布局里；靠右的 "?" 的 256px 气泡伸出屏幕 81px，Plan 页宽度变成 456px，手机浏览器（微信里打开）就把整页缩小，看起来字小、右边空一条。现在气泡只在打开时渲染，打开后测量位置并平移回屏幕内（左右留 8px）。查这类问题：手机宽度下比较 `document.documentElement.scrollWidth` 和 `clientWidth`，再找 `getBoundingClientRect().right` 超出的元素。
 - **前端测试要在 PowerShell 里跑**：在 Git Bash 里 `npm test` 报 "Vitest failed to find the runner"（全部失败，不是代码问题）。
 - **EF Core 的 `ExecuteDeleteAsync`** 内存测试库不支持；需要在测试里跑到的代码改用加载后 `RemoveRange`。
 
