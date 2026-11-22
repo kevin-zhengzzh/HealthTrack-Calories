@@ -271,6 +271,14 @@ Phase 2 的 `msa-backend` / `msa-frontend` 和它的 `neondb` 库**保持不动*
 - **暗色主题检查**：所有新页面截图检查过，只有 Points 标签"花费"那一格用的浅粉底在暗色下刺眼，改为半透明红。
 - 删除不再使用的 `Pagination` 组件和它的测试。
 
+### D-37 网页上用手机拍照记一餐：识别 → 用户确认 → 保存（2026-11-22）
+- **流程**：Add meal 弹窗分 **📷 Photo** / **Type it in**。Photo：`<input type=file accept=image/* capture=environment>`（手机直接开相机）→ 浏览器里缩到长边 1024px、重新编码成 JPEG 质量 0.8（`src/imageResize.ts`；重画到 canvas 会**去掉 EXIF，包括 GPS 位置**；实测 1.28 MB 原图存下来 86 KB）→ `POST /api/intake/recognize`（**不存库**）→ 表单预填名称、kcal/100g、克数 → 用户确认点 Add → `POST /api/intake/photo`（multipart，带照片和确认后的值）。
+- **为什么要确认**（用户选的）：没有秤的读数，重量是估的，识别也可能错，存之前看一眼更稳。秤那边保持自动记录（D-07）。
+- **克数**：手机照片用单独的提示词和 schema（`FoodPhotoSource.Phone`），让模型额外估可食部分的克数（`estimatedGrams`，限 1–5000），只作为默认值，旁边标 "AI estimate — adjust"。这对 D-03（重量来自测量）是个有意的例外：最终数字由用户确认，热量仍由代码 克数 × kcal/100g 算。秤的提示词不变。
+- **来源**：`IntakeRecords.Source` = `scale` / `photo` / `manual`（迁移 `AddIntakeSource`，默认 `scale`，旧的手动记录按 `Confidence = 'manual'` 回填；本地验证过升级和回滚）。Food Log 里 photo 的记录多一个 "Phone photo" 标签（悬停说明重量不是秤测的）。`corrected` = 用户改了模型给的名称或 kcal/100g（只改克数不算）。
+- **限额**：识别和秤共用每天 60 次（`AiUsageLogs`），保存走 200 条/天的上限；没 Key → 503，超限 → 429，失败 → 502，前端都给出"再试一次 / 改为手动输入"。非食物不存任何东西。
+- 本地用真实 Claude（Haiku）测过两张 Wikimedia 照片：蛋炒饭 → "fried rice with egg" 175 kcal/100g、估 350 g；希腊沙拉 → 95 kcal/100g、估 350 g（两张都估 350，克数仅供参考，用户需要改）。
+
 ### D-14 部署工作流暂时只能手动触发（2026-11-18；2026-11-19 已恢复自动部署）
 - **决定**：`deploy.yml` 只保留 `workflow_dispatch`。
 - **原因**：最初镜像名和应用名都指向 Phase 2，自动部署会覆盖线上服务。现在已改为 `healthtrack-*`，并且首次部署已成功。
@@ -315,6 +323,7 @@ Phase 2 的 `msa-backend` / `msa-frontend` 和它的 `neondb` 库**保持不动*
 | 2026-11-22 | PR #10（History 标签、浮动滚动条）、#11（基础消耗、Statistics、Device 页、History 统一样式、Points 标签）、#12（AI Set my plan）合并，均自动部署成功（最新 `b2fa03c`）。存档：待办新增 4 项（Statistics 下两块挪走、+ 按钮悬停横向展开、Add meal 说明和设备入口、免责说明），下次从这里开始 |
 | 2026-11-22 | 4 项待办完成（D-35）：周总结进侧边栏、热力图进 Check-ins、+ 悬停横向展开、Add meal 说明、免责说明页和各处提醒；前端 57 个测试，本地截图检查了宽屏、手机、注册页和说明页 |
 | 2026-11-22 | AI 看饮食、周总结写饮食、悬浮按钮重排、暗色检查（D-36）；后端 167 / 前端 51 个测试（删了 Pagination 的 6 个） |
+| 2026-11-22 | 网页拍照记一餐（D-37，迁移 `AddIntakeSource`）；后端 171 / 前端 57 个测试；本地用真实 Claude 端到端验证 |
 | 2026-11-21 | 统计/首页改版三步计划的第 1 步：Plan 页 + 目标按周存储（D-24，迁移 `WeeklyIntakeGoal`，共 141 个测试）。第 2 步首页改版、第 3 步统计页（Intake/Burned 切换，自然周/月/年可往回翻，日均只算有记录的天，排行榜） |
 
 ---
@@ -351,6 +360,7 @@ Phase 2 的 `msa-backend` / `msa-frontend` 和它的 `neondb` 库**保持不动*
 - **本地后端 AI "unavailable"**：`dotnet run --no-launch-profile` 不设环境，默认 Production，不加载 user-secrets，日志里是 "DeepSeek API key is not configured"。加 `ASPNETCORE_ENVIRONMENT=Development`。
 - **跑后端测试前先停掉本地后端**：`dotnet run` 的进程锁着 `bin/Debug/net10.0/backend.exe`，`dotnet test` 构建会失败（MSB3027）。
 - **Playwright 截暗色主题**：主题是皮肤（`data-theme` 由已装备的皮肤决定，Users 表里没有主题列）。`add_init_script` 设 `data-theme` 没用（太早，文档还没建好），要在页面加载后 `page.evaluate` 设置，再用 MutationObserver 防止应用改回去。
+- **Playwright 按钮名默认是子串匹配**：`get_by_role('button', name='Add')` 同时匹配 "+ Add meal" 和 "Add a meal or workout"，严格模式报错；要加 `exact=True`。另外 multipart 请求的 `post_data_buffer` 取不到大小（是 0），要看上传多大去查数据库里的 `length("ImageData")`。
 - **前端测试要在 PowerShell 里跑**：在 Git Bash 里 `npm test` 报 "Vitest failed to find the runner"（全部失败，不是代码问题）。
 - **EF Core 的 `ExecuteDeleteAsync`** 内存测试库不支持；需要在测试里跑到的代码改用加载后 `RemoveRange`。
 

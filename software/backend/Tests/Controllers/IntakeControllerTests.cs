@@ -24,10 +24,12 @@ public class IntakeControllerTests
         public bool Fail { get; set; }
         public bool IsAvailable { get; set; } = true;
         public int Calls { get; private set; }
+        public FoodPhotoSource? LastSource { get; private set; }
 
-        public Task<FoodRecognition> RecognizeAsync(byte[] image, string mediaType, CancellationToken ct = default)
+        public Task<FoodRecognition> RecognizeAsync(byte[] image, string mediaType, FoodPhotoSource source = FoodPhotoSource.Scale, CancellationToken ct = default)
         {
             Calls++;
+            LastSource = source;
             if (Fail) throw new FoodRecognitionException("boom");
             return Task.FromResult(Result);
         }
@@ -250,6 +252,72 @@ public class IntakeControllerTests
         Assert.True(body.Corrected);
     }
 
+    // ---- Phone photos ----
+
+    [Fact]
+    public async Task RecognizePhoto_AsksForAPhonePhoto_AndStoresNothing()
+    {
+        using var db = NewDb();
+        var recognizer = new FakeRecognizer { Result = new(true, "fried rice", 180, "medium", 1500, 40, EstimatedGrams: 320) };
+
+        var body = Body<PhotoRecognitionDto>(await NewController(db, recognizer).RecognizePhoto(Jpeg(), CancellationToken.None));
+
+        Assert.Equal(FoodPhotoSource.Phone, recognizer.LastSource);
+        Assert.Equal(("fried rice", 180.0, 320.0), (body.FoodName, body.CaloriesPer100g, body.EstimatedGrams!.Value));
+        Assert.Empty(db.IntakeRecords);
+        Assert.Single(db.AiUsageLogs);   // counts against the daily cap
+    }
+
+    [Fact]
+    public async Task RecognizePhoto_NotFood_Unavailable_OrOverTheCap()
+    {
+        using var db = NewDb();
+        var notFood = Body<PhotoRecognitionDto>(await NewController(db, new FakeRecognizer { Result = new(false, "", 0, "low", 10, 5) })
+            .RecognizePhoto(Jpeg(), CancellationToken.None));
+        Assert.False(notFood.IsFood);
+        Assert.Null(notFood.EstimatedGrams);
+
+        Assert.Equal(503, Status(await NewController(db, new FakeRecognizer { IsAvailable = false }).RecognizePhoto(Jpeg(), CancellationToken.None)));
+        Assert.Equal(502, Status(await NewController(db, new FakeRecognizer { Fail = true }).RecognizePhoto(Jpeg(), CancellationToken.None)));
+        Assert.IsType<BadRequestObjectResult>(await NewController(db, new FakeRecognizer()).RecognizePhoto(null, CancellationToken.None));
+
+        for (var i = 0; i < IntakeController.DailyRecognitionLimit; i++)
+            db.AiUsageLogs.Add(new AiUsageLog { UserId = Me, Feature = AiFeatures.FoodRecognition, CreatedAt = DateTime.UtcNow });
+        await db.SaveChangesAsync();
+        var capped = new FakeRecognizer();
+        Assert.Equal(429, Status(await NewController(db, capped).RecognizePhoto(Jpeg(), CancellationToken.None)));
+        Assert.Equal(0, capped.Calls);
+    }
+
+    [Fact]
+    public async Task CreateFromPhoto_SavesThePhotoAndTheCheckedValues()
+    {
+        using var db = NewDb();
+
+        var body = Body<IntakeRecordDto>(await NewController(db, new FakeRecognizer())
+            .CreateFromPhoto(Jpeg(2048), " Fried rice ", 300, 180, "medium", corrected: true, TodayStr, CancellationToken.None));
+
+        Assert.Equal(("Fried rice", 540, "photo", true, true), (body.FoodName, body.Calories, body.Source, body.HasImage, body.Corrected));
+        var saved = db.IntakeRecords.Single();
+        Assert.Equal(2048, saved.ImageData!.Length);
+        Assert.Null(saved.DeviceId);
+        Assert.Equal("medium", saved.Confidence);
+    }
+
+    [Fact]
+    public async Task CreateFromPhoto_RejectsBadValuesOrNoPhoto_AndCleansConfidence()
+    {
+        using var db = NewDb();
+        var c = NewController(db, new FakeRecognizer());
+        Assert.IsType<BadRequestObjectResult>(await c.CreateFromPhoto(null, "rice", 100, 100, "high", false, null, CancellationToken.None));
+        Assert.IsType<BadRequestObjectResult>(await c.CreateFromPhoto(Jpeg(), "rice", 0, 100, "high", false, null, CancellationToken.None));
+        Assert.IsType<BadRequestObjectResult>(await c.CreateFromPhoto(Jpeg(), "", 100, 100, "high", false, null, CancellationToken.None));
+        Assert.Empty(db.IntakeRecords);
+
+        var odd = Body<IntakeRecordDto>(await c.CreateFromPhoto(Jpeg(), "rice", 100, 100, "manual", false, null, CancellationToken.None));
+        Assert.Equal("medium", odd.Confidence);
+    }
+
     [Fact]
     public async Task Create_ManualMeal_ComputesCalories_OnTheLocalDay()
     {
@@ -260,6 +328,7 @@ public class IntakeControllerTests
         Assert.Equal("Toast", body.FoodName);
         Assert.Equal(159, body.Calories);
         Assert.Equal("manual", body.Confidence);
+        Assert.Equal("manual", body.Source);
         Assert.False(body.HasImage);
         Assert.Equal(Today.AddDays(-1), body.Date);
         Assert.Equal(Me, db.IntakeRecords.Single().UserId);

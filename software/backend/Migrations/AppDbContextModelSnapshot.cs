@@ -235,6 +235,10 @@ namespace backend.Migrations
                     b.Property<byte[]>("ImageData")
                         .HasColumnType("bytea");
 
+                    b.Property<string>("Source")
+                        .IsRequired()
+                        .HasColumnType("text");
+
                     b.Property<int>("UserId")
                         .HasColumnType("integer");
 

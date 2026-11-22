@@ -1,3 +1,5 @@
+using backend.Models;
+
 namespace backend.DTOs;
 
 public record CreateDeviceRequest(string Name);
@@ -31,7 +33,12 @@ public record IntakeRecordDto(
     bool Corrected,
     bool HasImage,
     DateOnly Date,
-    DateTime CreatedAt);
+    DateTime CreatedAt,
+    string Source = IntakeRecord.SourceScale);
+
+// POST /api/intake/recognize: what the model saw in a phone photo. Nothing
+// is stored; the website fills the Add meal form with it.
+public record PhotoRecognitionDto(bool IsFood, string FoodName, double CaloriesPer100g, string Confidence, double? EstimatedGrams);
 
 public record UpdateIntakeRequest(string FoodName, double WeightGrams, double CaloriesPer100g);
 

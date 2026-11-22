@@ -25,6 +25,13 @@ public class IntakeRecord
     // True once the user has edited the AI's food name or calorie density
     public bool Corrected { get; set; }
 
+    // How it was logged: "scale" (the device), "photo" (a phone photo from
+    // the website; weight typed or estimated, not measured) or "manual"
+    public string Source { get; set; } = SourceScale;
+    public const string SourceScale = "scale";
+    public const string SourcePhoto = "photo";
+    public const string SourceManual = "manual";
+
     public byte[]? ImageData { get; set; }
     public string? ImageContentType { get; set; }
 

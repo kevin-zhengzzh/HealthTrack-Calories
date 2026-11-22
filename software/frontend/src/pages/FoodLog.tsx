@@ -139,8 +139,8 @@ export default function FoodLog() {
         <div className="flex flex-col gap-2">
           <SearchBox value={search} onChange={(v) => { setSearch(v); setShownDays(GROUPS_PER_PAGE) }} placeholder="Search by food…" />
           <p className="text-xs text-[var(--text-muted)] px-1">
-            Calories are estimates: the AI names the food from the photo, times the scale's weight. Tap ✎ to correct
-            an entry. <Link to="/disclaimer" className="underline">Disclaimer</Link>
+            Calories are estimates: the AI names the food from the photo, times the weight (measured by the scale, or
+            typed in for phone photos). Tap ✎ to correct an entry. <Link to="/disclaimer" className="underline">Disclaimer</Link>
           </p>
         </div>
       )}
@@ -164,7 +164,15 @@ export default function FoodLog() {
                   ? <MealPhoto id={r.id} alt={r.foodName || 'meal'} onOpen={setViewingPhoto} />
                   : <div className="w-16 h-16 rounded-lg shrink-0 bg-[var(--bg-inset)] flex items-center justify-center text-2xl" aria-hidden>🍽️</div>}
                 name={isUnnamed(r) ? <span className="text-[var(--text-muted)] italic">Unnamed food</span> : r.foodName}
-                badge={<ConfidenceBadge record={r} />}
+                badge={<>
+                  <ConfidenceBadge record={r} />
+                  {r.source === 'photo' && (
+                    <span className="text-xs px-2 py-0.5 rounded-full bg-[var(--bg-inset)] text-[var(--text-secondary)]"
+                      title="Added from a phone photo: the weight was typed in or estimated, not measured by the scale">
+                      Phone photo
+                    </span>
+                  )}
+                </>}
                 detail={<>{formatTime(r.createdAt)} · {r.weightGrams} g{!isUnnamed(r) && ` · ${r.caloriesPer100g} kcal/100 g`}</>}
                 figure={isUnnamed(r) ? '– kcal' : `${r.calories} kcal`}
                 actions={<>
