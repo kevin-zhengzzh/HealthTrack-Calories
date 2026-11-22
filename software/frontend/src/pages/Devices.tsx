@@ -12,6 +12,41 @@ import { dangerBtn, inputClass, primaryBtn, secondaryBtn } from '../historyForma
 // pairing), so the list is polled while the page is open.
 const POLL_MS = 5_000
 
+// Same bands as the bars on the device's Wi-Fi list
+function signal(rssi: number) {
+  if (rssi > -55) return 'strong'
+  if (rssi > -67) return 'good'
+  if (rssi > -75) return 'fair'
+  return 'weak'
+}
+
+// "Firmware 0.6.0 · Wi-Fi fair (−71 dBm) · Scale connected · 2 meals waiting to upload"
+function StatusLine({ d }: { d: Device }) {
+  if (!d.statusAt) {
+    return <p className="text-xs text-[var(--text-muted)] mt-0.5">Status shows up after the device next checks in (needs firmware 0.6 or newer).</p>
+  }
+  const parts: React.ReactNode[] = []
+  if (d.firmwareVersion) parts.push(`Firmware ${d.firmwareVersion}`)
+  if (d.wifiRssi != null) {
+    const s = signal(d.wifiRssi)
+    parts.push(<span key="wifi" className={s === 'weak' ? 'text-amber-600' : undefined}>Wi-Fi {s} ({d.wifiRssi} dBm)</span>)
+  }
+  if (d.scaleConnected != null) {
+    parts.push(d.scaleConnected
+      ? 'Scale connected'
+      : <span key="scale" className="text-amber-600">Scale not connected</span>)
+  }
+  if (d.pendingUploads) {
+    parts.push(<span key="queue" className="text-amber-600">{d.pendingUploads} meal{d.pendingUploads === 1 ? '' : 's'} waiting to upload</span>)
+  }
+  return (
+    <p className="text-xs text-[var(--text-muted)] mt-0.5 tabular-nums">
+      {parts.map((p, i) => <span key={i}>{i > 0 && ' · '}{p}</span>)}
+      <span className="block">as of {fmtSeen(d.statusAt)}</span>
+    </p>
+  )
+}
+
 const fmtSeen = (iso: string) =>
   new Date(iso).toLocaleString('en-US', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit', hour12: false })
 
@@ -161,6 +196,7 @@ export default function Devices() {
                       ? 'Waiting for the device to collect its key…'
                       : <><code>{d.keyPrefix}…</code> · {d.lastSeenAt ? `last seen ${fmtSeen(d.lastSeenAt)}` : 'never used'}</>}
                   </p>
+                  {!d.awaitingDevice && <StatusLine d={d} />}
                 </div>
                 <button type="button" onClick={() => setConfirmRevoke(d)}
                   className="text-sm text-[var(--text-muted)] hover:text-red-500 px-2 py-1 rounded-lg cursor-pointer">

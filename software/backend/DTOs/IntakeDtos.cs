@@ -9,7 +9,8 @@ public record CreateDeviceResult(int Id, string Name, string KeyPrefix, string K
 
 // AwaitingDevice: claimed with a pairing code, but the device hasn't
 // collected its key yet (it is offline or the pairing expired)
-public record DeviceDto(int Id, string Name, string KeyPrefix, DateTime CreatedAt, DateTime? LastSeenAt, bool AwaitingDevice);
+public record DeviceDto(int Id, string Name, string KeyPrefix, DateTime CreatedAt, DateTime? LastSeenAt, bool AwaitingDevice,
+    string? FirmwareVersion = null, int? WifiRssi = null, bool? ScaleConnected = null, int? PendingUploads = null, DateTime? StatusAt = null);
 
 // Pairing-code flow (device ⇄ backend ⇄ website)
 public record PairingStartRequest(string? Name, string? HardwareId = null);

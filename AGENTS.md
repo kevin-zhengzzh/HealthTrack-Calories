@@ -279,6 +279,13 @@ Phase 2 的 `msa-backend` / `msa-frontend` 和它的 `neondb` 库**保持不动*
 - **限额**：识别和秤共用每天 60 次（`AiUsageLogs`），保存走 200 条/天的上限；没 Key → 503，超限 → 429，失败 → 502，前端都给出"再试一次 / 改为手动输入"。非食物不存任何东西。
 - 本地用真实 Claude（Haiku）测过两张 Wikimedia 照片：蛋炒饭 → "fried rice with egg" 175 kcal/100g、估 350 g；希腊沙拉 → 95 kcal/100g、估 350 g（两张都估 350，克数仅供参考，用户需要改）。
 
+### D-38 固件 0.6.0：设备状态、离线暂存补传、HTTPS 证书校验（2026-11-22）
+- **设备状态**：设备在本来就要发的请求（账号检查、上传、Today 页、补传）里带请求头 `X-Firmware`（`FW_VERSION`，现在 0.6.0）、`X-Wifi-Rssi`、`X-Scale`（秤是否连接）、`X-Queued`（离线暂存的条数）；后端 `DeviceStatus.Apply` 存到 Devices 表（迁移 `AddDeviceStatus`：FirmwareVersion / WifiRssi / ScaleConnected / PendingUploads / StatusAt），Device 页显示 "Firmware 0.6.0 · Wi-Fi fair (−71 dBm) · Scale connected · 2 meals waiting to upload · as of …"（弱信号、秤没接、有待传的标琥珀色）。**不增加请求**，所以不会更频繁地唤醒后端（D-19 的考虑）。
+- **离线暂存补传**：上传因为没网、服务器 5xx / 超时（冷启动）、每日上限 429、或者还没对时无法 HTTPS 而失败时，把照片 + 重量 + 拍摄时间 + 本地日期存进闪存（LittleFS，`default_16MB.csv` 的 spiffs 分区，`/q/<拍摄时间>-<序号>.jpg/.txt`），最多 10 条；屏幕显示 "Saved for later"、LED 琥珀色。空闲且在线时后台任务（不画屏，一次一个 TLS 连接）按时间顺序补传，失败退避 1 → 30 分钟；4xx 拒绝的直接丢弃；401 回到配对并清空暂存（属于原账号）。**没网时不再等**：重量稳定就拍照存起来（原来是一直等 Wi-Fi）。主画面 Ready 一行显示 "2 meals waiting to upload / saved offline"。
+- **后端**：`POST /api/intake/device` 新增可选 `takenAt`（Unix 秒）：两周内、不超过未来 5 分钟时，记录的 CreatedAt 用它，日期用设备给的本地日期（与拍摄时间的 UTC 日期相差 ≤1 天才接受，否则用 UTC 日期）——补传的旧餐不会被 `ResolveToday` 夹到今天。**去重**：同一设备、同一 `takenAt` 已有记录时直接返回那条（不重复记录、不再花钱识别）——第一次上传超时但服务器其实已存的情况。所有上传都带 `takenAt`，所以第一次和重试能对上。
+- **HTTPS**：`beginHttp` 不再 `setInsecure()`，改为 `setCACert(ROOT_CA)`（`include/root_ca.h`：DigiCert Global Root G2——当前链 Microsoft TLS G2 RSA CA OCSP 16 → Microsoft TLS RSA Root G2（交叉签名）→ 它；另带 Microsoft RSA Root CA 2017、DigiCert Global Root CA 以防 Azure 换证书；来自 certifi，`openssl s_client -CAfile` 验证通过）。证书校验要正确时间：未对时最多等 5 秒，仍未对时不发 HTTPS（上传进暂存）。**换后端域名或 Azure 换 CA 时要更新 root_ca.h**，否则设备连不上（症状：串口 "HTTPS" / 所有请求 -1）。
+- **待真机验证**（烧录时设备处没有可用 Wi-Fi）：联网后账号检查 200（证书校验通过）；断网称重 → Saved for later → 联网后约 1 分钟补传、Food Log 里是原来的时间；Device 页状态（需后端部署后）。
+
 ### D-14 部署工作流暂时只能手动触发（2026-11-18；2026-11-19 已恢复自动部署）
 - **决定**：`deploy.yml` 只保留 `workflow_dispatch`。
 - **原因**：最初镜像名和应用名都指向 Phase 2，自动部署会覆盖线上服务。现在已改为 `healthtrack-*`，并且首次部署已成功。
@@ -325,6 +332,7 @@ Phase 2 的 `msa-backend` / `msa-frontend` 和它的 `neondb` 库**保持不动*
 | 2026-11-22 | AI 看饮食、周总结写饮食、悬浮按钮重排、暗色检查（D-36）；后端 167 / 前端 51 个测试（删了 Pagination 的 6 个） |
 | 2026-11-22 | 网页拍照记一餐（D-37，迁移 `AddIntakeSource`）；后端 171 / 前端 57 个测试；本地用真实 Claude 端到端验证 |
 | 2026-11-22 | 修复手机上 Plan 页被整体缩小（`InfoTip` 隐藏的气泡撑宽页面）；所有页面在 375px 下宽度检查通过 |
+| 2026-11-22 | 固件 0.6.0（D-38）：设备状态头、离线暂存补传、HTTPS 证书校验；后端 `takenAt` + 去重 + 迁移 `AddDeviceStatus`（177 个测试）；Device 页状态；已烧录（开机正常，设备处没 Wi-Fi，联网部分待验证） |
 | 2026-11-21 | 统计/首页改版三步计划的第 1 步：Plan 页 + 目标按周存储（D-24，迁移 `WeeklyIntakeGoal`，共 141 个测试）。第 2 步首页改版、第 3 步统计页（Intake/Burned 切换，自然周/月/年可往回翻，日均只算有记录的天，排行榜） |
 
 ---
@@ -374,9 +382,9 @@ Phase 2 的 `msa-backend` / `msa-frontend` 和它的 `neondb` 库**保持不动*
 - [ ] 相机对准：秤放在 Stack-chan 前方 20–30cm，用摇杆调整
 - [x] 恢复 CI 通过后自动部署（D-14）
 - [x] 手机配网（D-16）、配对码（D-15）—— 待部署后在真机上验证配对流程
-- [ ] HTTPS 证书校验（目前 `setInsecure()`，见 `beginHttp` 的 TODO）
-- [ ] 上传失败暂存 + 补传（带实际称重时间）
-- [ ] OTA 固件升级；时区跟随账号设置；网页显示设备状态（版本、电量、信号）
+- [x] HTTPS 证书校验（D-38，待联网真机验证）
+- [x] 上传失败暂存 + 补传（带实际称重时间）（D-38，待真机验证）
+- [ ] OTA 固件升级；时区跟随账号设置；~~网页显示设备状态（版本、信号、秤、待传）~~（D-38；电量没做，设备一直插电）
 - [ ] Stack-chan 处的 2.4GHz 信号很弱（−70～−76dBm）
 - [ ] 设备上的 Wi-Fi 列表加"其他网络…"，可以手动输入隐藏网络的名字；确认仅 WPA3 的网络能否连接
 - [ ] 后端最小副本 0 → 冷启动 20–30 秒，可能导致长时间闲置后的第一次上传超时；决定是否改为 1

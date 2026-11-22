@@ -57,7 +57,11 @@ public class IntakeController : ControllerBase
         IFormFile? image,
         [FromForm] double weightGrams,
         [FromForm] string? localDate,
-        CancellationToken ct)
+        CancellationToken ct,
+        // When the photo was taken (Unix seconds). Meals saved offline on the
+        // device arrive later, so they're logged at this time and day; a
+        // retry of an upload the server already saved is recognised by it.
+        [FromForm] long? takenAt = null)
     {
         if (string.IsNullOrWhiteSpace(deviceKey))
             return Unauthorized(new { message = "Missing device key." });
@@ -77,10 +81,30 @@ public class IntakeController : ControllerBase
             return BadRequest(new { message = $"Weight must be between 1 and {MaxWeightGrams} grams." });
 
         var userId = device.UserId;
-        var since = DateTime.UtcNow.Date;
-        var date = CheckInController.ResolveToday(localDate);
+        var now = DateTime.UtcNow;
+        var since = now.Date;
+        var taken = DeviceStatus.TakenAt(takenAt, now);
+        var date = taken is { } t ? DeviceStatus.DayOf(t, localDate) : CheckInController.ResolveToday(localDate);
+        var createdAt = taken ?? now;
         weightGrams = Math.Round(weightGrams, 1);
         var contentType = image.ContentType.ToLowerInvariant();
+        device.LastSeenAt = now;
+        DeviceStatus.Apply(device, HttpContext?.Request.Headers, now);
+
+        // Already saved (the first attempt timed out after the server stored
+        // it): answer as before instead of logging the meal twice
+        if (taken is not null)
+        {
+            var existing = await _db.IntakeRecords
+                .FirstOrDefaultAsync(r => r.DeviceId == device.Id && r.CreatedAt == createdAt, ct);
+            if (existing is not null)
+            {
+                await _db.SaveChangesAsync(ct);
+                return Ok(new DeviceUploadResult(true, existing.Id, existing.FoodName, existing.WeightGrams, existing.Calories,
+                    await TodayTotal(userId, date, ct), existing.FoodName.Length > 0 ? $"{existing.FoodName}: {existing.Calories} kcal" : $"Saved {existing.WeightGrams} g",
+                    await DailyGoal(userId, ct)));
+            }
+        }
 
         if (!_recognizer.IsAvailable)
         {
@@ -91,7 +115,6 @@ public class IntakeController : ControllerBase
                 return StatusCode(StatusCodes.Status429TooManyRequests,
                     new { message = $"Daily limit of {DailyUploadLimit} uploads reached." });
 
-            device.LastSeenAt = DateTime.UtcNow;
             var raw = new IntakeRecord
             {
                 UserId = userId,
@@ -100,6 +123,7 @@ public class IntakeController : ControllerBase
                 ImageData = await ReadAllAsync(image, ct),
                 ImageContentType = contentType,
                 Date = date,
+                CreatedAt = createdAt,
             };
             _db.IntakeRecords.Add(raw);
             await _db.SaveChangesAsync(ct);
@@ -115,7 +139,6 @@ public class IntakeController : ControllerBase
             return StatusCode(StatusCodes.Status429TooManyRequests,
                 new { message = $"Daily limit of {DailyRecognitionLimit} recognitions reached." });
 
-        device.LastSeenAt = DateTime.UtcNow;
         var bytes = await ReadAllAsync(image, ct);
 
         FoodRecognition result;
@@ -150,6 +173,7 @@ public class IntakeController : ControllerBase
             ImageData = bytes,
             ImageContentType = contentType,
             Date = date,
+            CreatedAt = createdAt,
         };
         record.Calories = IntakeRecord.ComputeCalories(record.WeightGrams, record.CaloriesPer100g);
         _db.IntakeRecords.Add(record);
@@ -199,6 +223,7 @@ public class IntakeController : ControllerBase
             return Unauthorized(new { message = "Unknown or revoked device key." });
 
         device.LastSeenAt = DateTime.UtcNow;
+        DeviceStatus.Apply(device, HttpContext?.Request.Headers, device.LastSeenAt.Value);
         await _db.SaveChangesAsync(ct);
         return Ok(await DeviceToday(device.UserId, CheckInController.ResolveToday(localDate), ct));
     }

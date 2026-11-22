@@ -30,6 +30,8 @@
 #include "UNIT_SCALES.h"
 #include "head.h"
 #include "netsetup.h"
+#include <LittleFS.h>
+#include "root_ca.h"
 
 // Wi-Fi and the device key are set up on the device itself now (phone setup
 // portal + pairing code). secrets.h is optional: API_BASE_URL / TIMEZONE
@@ -44,6 +46,8 @@
 #ifndef TIMEZONE
 #define TIMEZONE "NZST-12NZDT,M9.5.0,M4.1.0/3"
 #endif
+// Reported to the backend (X-Firmware) and shown on the website's Device page
+#define FW_VERSION "0.6.0"
 
 // ---- Tuning ----
 static constexpr float MIN_FOOD_GRAMS   = 5.0f;   // below this the scale counts as empty
@@ -168,6 +172,10 @@ static String localDate();
 static Rect intakeRingRect = {0, 0, 0, 0};  // tap target, set when drawn
 static bool todayOpen = false;              // "Today" list (opened from the ring)
 static volatile bool todayBusy = false;     // its request is running
+// Meals saved offline (in flash), sent once the server can be reached again
+static int queueCount = 0;
+static volatile bool queueBusy = false;     // a queued meal is being sent
+static void clearQueue();
 static void drawToday();
 
 // On-device Wi-Fi setup
@@ -707,10 +715,11 @@ static void drawScreen() {
                 drawMessage("Aim camera", TFT_WHITE, "Drag stick; tap outside = done");
             else if (millis() - zeroedAt < 1500)
                 drawMessage("Zeroed", TFT_GREEN, "Put food on the plate");
-            else if (steady && !online)
-                drawMessage("Waiting for Wi-Fi", TFT_ORANGE, net::statusText());
             else if (state == State::Settling)
-                drawMessage("Hold still...", TFT_WHITE, "Taking photo when steady");
+                drawMessage(steady ? "Just a moment..." : "Hold still...", TFT_WHITE, "Taking photo when steady");
+            else if (queueCount > 0)
+                drawMessage("Ready", TFT_WHITE, String(queueCount) + (queueCount == 1 ? " meal " : " meals ")
+                                                + (online ? "waiting to upload" : "saved offline"));
             else
                 drawMessage("Ready", TFT_WHITE, online ? "Put food on the plate" : net::statusText());
             if (state == State::Settling) {
@@ -938,7 +947,9 @@ static String localDate() {
 // to the server and the remaining wait is the server recognising it.
 class ProgressStream : public Stream {
 public:
-    ProgressStream(const uint8_t* data, size_t size) : _data(data), _size(size) {}
+    // draw: show the progress on screen. Only from the main loop; a
+    // background task (the offline queue) must not draw.
+    ProgressStream(const uint8_t* data, size_t size, bool draw = true) : _data(data), _size(size), _draw(draw) {}
     int available() override { return _size - _pos; }
     int read() override { return _pos < _size ? _data[_pos++] : -1; }
     int peek() override { return _pos < _size ? _data[_pos] : -1; }
@@ -946,7 +957,7 @@ public:
         size_t n = min(length, _size - _pos);
         memcpy(buffer, _data + _pos, n);
         _pos += n;
-        report();
+        if (_draw) report();
         return n;
     }
     size_t write(uint8_t) override { return 0; }
@@ -965,19 +976,45 @@ private:
     }
     const uint8_t* _data;
     size_t _size, _pos = 0;
+    bool _draw;
     uint32_t _lastDraw = 0;
 };
 
 // ---------------------------------------------------------------- HTTP + device key
 
+// Valid once NTP has set the clock. TLS certificates are checked against it.
+static bool clockValid() { return time(nullptr) >= 1700000000; }
+
+static bool waitForClock(uint32_t ms) {
+    uint32_t start = millis();
+    while (!clockValid() && millis() - start < ms) delay(100);
+    return clockValid();
+}
+
 static bool beginHttp(HTTPClient& http, WiFiClient& plain, WiFiClientSecure& secure, const String& url) {
     if (url.startsWith("https://")) {
-        // TODO: verify the server certificate (CA bundle). Until then the
-        // traffic is encrypted but a spoofed server isn't detected.
-        secure.setInsecure();
+        // The server's certificate chain is checked against the roots in
+        // root_ca.h (D-38), which needs the real time: until NTP has set the
+        // clock there's no HTTPS, and meals wait in the offline queue
+        if (!waitForClock(5000)) {
+            Serial.println("HTTPS: clock not set yet (NTP)");
+            return false;
+        }
+        secure.setCACert(ROOT_CA);
         return http.begin(secure, url);
     }
     return http.begin(plain, url);
+}
+
+// The device key, plus what the website's Device page shows about this
+// device. Sent with the requests the device makes anyway, so the status
+// costs no extra wake-ups of the backend.
+static void addDeviceHeaders(HTTPClient& http, const String& key) {
+    http.addHeader("X-Device-Key", key);
+    http.addHeader("X-Firmware", FW_VERSION);
+    if (WiFi.status() == WL_CONNECTED) http.addHeader("X-Wifi-Rssi", String(WiFi.RSSI()));
+    http.addHeader("X-Scale", scaleOk ? "1" : "0");
+    http.addHeader("X-Queued", String(queueCount));
 }
 
 // Small JSON POST for the pairing endpoints; returns the HTTP status (<= 0 on network errors)
@@ -1039,6 +1076,7 @@ static void clearDeviceKey() {
     ownerName = "";
     intakeToday = -1;
     intakeGoal = 0;
+    clearQueue();  // its saved meals belong to the account it was paired with
     Serial.println("Device key cleared");
 }
 
@@ -1079,7 +1117,7 @@ static void accountCheckTask(void* arg) {
         if (!date.isEmpty()) url += "?localDate=" + date;
         if (beginHttp(http, plain, secure, url)) {
             http.setTimeout(HTTP_TIMEOUT);
-            http.addHeader("X-Device-Key", *key);
+            addDeviceHeaders(http, *key);
             code = http.GET();
             JsonDocument doc;
             if (code == 200 && !deserializeJson(doc, http.getString())) {
@@ -1113,7 +1151,7 @@ static void unpairTask(void* arg) {
         WiFiClientSecure secure;
         if (beginHttp(http, plain, secure, String(API_BASE_URL) + "/api/device/me")) {
             http.setTimeout(HTTP_TIMEOUT);
-            http.addHeader("X-Device-Key", *key);
+            addDeviceHeaders(http, *key);
             code = http.sendRequest("DELETE");
             http.end();
         }
@@ -1137,7 +1175,7 @@ static void unpairDevice() {
 }
 
 static void startAccountCheck() {
-    if (accountCheckBusy || todayBusy || deviceKey.isEmpty() || WiFi.status() != WL_CONNECTED || state == State::Uploading)
+    if (accountCheckBusy || todayBusy || queueBusy || deviceKey.isEmpty() || WiFi.status() != WL_CONNECTED || state == State::Uploading)
         return;
     accountCheckBusy = true;
     accountChecked = true;
@@ -1216,7 +1254,7 @@ static void todayTask(void* arg) {
         if (!req->date.isEmpty()) url += "?localDate=" + req->date;
         if (beginHttp(http, plain, secure, url)) {
             http.setTimeout(HTTP_TIMEOUT);
-            http.addHeader("X-Device-Key", req->key);
+            addDeviceHeaders(http, req->key);
             code = req->deleteId ? http.sendRequest("DELETE") : http.GET();
             if (code > 0) body = http.getString();
             http.end();
@@ -1315,7 +1353,7 @@ static void todayLoop() {
         todayError = "Offline";
         return;
     }
-    if (accountCheckBusy || state == State::Uploading || deviceKey.isEmpty()) return;  // one TLS connection at a time
+    if (accountCheckBusy || queueBusy || state == State::Uploading || deviceKey.isEmpty()) return;  // one TLS connection at a time
 
     TodayReq* req = new TodayReq{deviceKey, localDate(), todayWantDelete};
     todayReqDate = req->date;
@@ -2165,55 +2203,73 @@ static void wifiSetupLoop() {
 
 // ---------------------------------------------------------------- upload
 
-// Builds the multipart body by hand (HTTPClient has no multipart helper)
-// in PSRAM, then POSTs it with the device key.
-static bool upload(const uint8_t* jpg, size_t jpgLen, float grams, String& outLine1, String& outLine2) {
-    if (WiFi.status() != WL_CONNECTED) {
-        outLine1 = "No Wi-Fi";
-        outLine2 = "Settings > Wi-Fi to add one";
-        return false;
-    }
+static const char* BOUNDARY = "----StackChanScaleBoundary7d1f";
 
-    const char* boundary = "----StackChanScaleBoundary7d1f";
-    String date = localDate();
+// The multipart body (fields + photo), built by hand in PSRAM (HTTPClient has
+// no multipart helper); the caller frees it. takenAt: when the photo was taken
+// (Unix seconds, 0 = clock not set yet), so a meal sent later from the
+// offline queue is logged at the right time and day, and a retry of an upload
+// the server already saved isn't logged twice.
+static uint8_t* buildMealBody(const uint8_t* jpg, size_t jpgLen, float grams, const String& date,
+                              uint32_t takenAt, size_t& total) {
     String head;
-    head += "--"; head += boundary; head += "\r\n";
-    head += "Content-Disposition: form-data; name=\"weightGrams\"\r\n\r\n";
-    head += String(grams, 1); head += "\r\n";
-    if (date.length()) {
-        head += "--"; head += boundary; head += "\r\n";
-        head += "Content-Disposition: form-data; name=\"localDate\"\r\n\r\n";
-        head += date; head += "\r\n";
-    }
-    head += "--"; head += boundary; head += "\r\n";
+    auto field = [&head](const char* name, const String& value) {
+        head += "--"; head += BOUNDARY; head += "\r\n";
+        head += "Content-Disposition: form-data; name=\""; head += name; head += "\"\r\n\r\n";
+        head += value; head += "\r\n";
+    };
+    field("weightGrams", String(grams, 1));
+    if (date.length()) field("localDate", date);
+    if (takenAt) field("takenAt", String((unsigned long)takenAt));
+    head += "--"; head += BOUNDARY; head += "\r\n";
     head += "Content-Disposition: form-data; name=\"image\"; filename=\"meal.jpg\"\r\n";
     head += "Content-Type: image/jpeg\r\n\r\n";
-    String tail = String("\r\n--") + boundary + "--\r\n";
+    String tail = String("\r\n--") + BOUNDARY + "--\r\n";
 
-    size_t total = head.length() + jpgLen + tail.length();
+    total = head.length() + jpgLen + tail.length();
     uint8_t* body = (uint8_t*)ps_malloc(total);
-    if (!body) {
-        outLine1 = "Out of memory";
-        outLine2 = "";
-        return false;
-    }
+    if (!body) return nullptr;
     memcpy(body, head.c_str(), head.length());
     memcpy(body + head.length(), jpg, jpgLen);
     memcpy(body + head.length() + jpgLen, tail.c_str(), tail.length());
+    return body;
+}
+
+// How sending went. Retry: no network, server trouble (5xx, cold start
+// timing out), the daily cap (429) or no clock for HTTPS yet: keep the photo
+// and try again later. Failed: rejected for good (bad request).
+enum class Sent { Done, Retry, Failed };
+
+static Sent classify(int code) {
+    if (code == 200) return Sent::Done;
+    if (code <= 0 || code >= 500 || code == 429) return Sent::Retry;
+    return Sent::Failed;
+}
+
+// POSTs a photo with the device key, showing progress on screen
+static Sent upload(const uint8_t* jpg, size_t jpgLen, float grams, const String& date, uint32_t takenAt,
+                   String& outLine1, String& outLine2) {
+    if (WiFi.status() != WL_CONNECTED) return Sent::Retry;
+
+    size_t total = 0;
+    uint8_t* body = buildMealBody(jpg, jpgLen, grams, date, takenAt, total);
+    if (!body) {
+        outLine1 = "Out of memory";
+        outLine2 = "";
+        return Sent::Failed;
+    }
 
     String url = String(API_BASE_URL) + "/api/intake/device";
     HTTPClient http;
     WiFiClient plain;
     WiFiClientSecure secure;
-    if (!beginHttp(http, plain, secure, url)) {
+    if (!beginHttp(http, plain, secure, url)) {  // no clock for HTTPS yet
         free(body);
-        outLine1 = "Bad API_BASE_URL";
-        outLine2 = "";
-        return false;
+        return Sent::Retry;
     }
     http.setTimeout(HTTP_TIMEOUT);
-    http.addHeader("X-Device-Key", deviceKey);
-    http.addHeader("Content-Type", String("multipart/form-data; boundary=") + boundary);
+    addDeviceHeaders(http, deviceKey);
+    http.addHeader("Content-Type", String("multipart/form-data; boundary=") + BOUNDARY);
 
     uploadPhase = UploadPhase::Sending;
     uploadPct = 0;
@@ -2228,14 +2284,15 @@ static bool upload(const uint8_t* jpg, size_t jpgLen, float grams, String& outLi
     JsonDocument doc;
     bool parsed = !deserializeJson(doc, resp);
 
-    if (code == 200 && parsed) {
-        const char* food = doc["foodName"] | "";
-        int kcal = doc["calories"] | 0;
-        int today = doc["todayCalories"] | 0;
-        intakeToday = today;
-        intakeGoal = doc["dailyGoal"] | 0;
-        intakeDate = date;
-        if (!(doc["isFood"] | true)) {
+    if (code == 200) {
+        const char* food = parsed ? (doc["foodName"] | "") : "";
+        int kcal = parsed ? (doc["calories"] | 0) : 0;
+        if (parsed) {
+            intakeToday = doc["todayCalories"] | 0;
+            intakeGoal = doc["dailyGoal"] | 0;
+            intakeDate = date;
+        }
+        if (parsed && !(doc["isFood"] | true)) {
             outLine1 = "No food seen";
             outLine2 = "Nothing was logged";
         } else if (strlen(food) == 0) {
@@ -2243,9 +2300,9 @@ static bool upload(const uint8_t* jpg, size_t jpgLen, float grams, String& outLi
             outLine2 = "Name it in the Food Log";
         } else {
             outLine1 = food;  // long names scroll on screen
-            outLine2 = String(kcal) + " kcal  (today " + String(today) + ")";
+            outLine2 = String(kcal) + " kcal  (today " + String(intakeToday) + ")";
         }
-        return true;
+        return Sent::Done;
     }
 
     if (code == 401) {
@@ -2254,13 +2311,216 @@ static bool upload(const uint8_t* jpg, size_t jpgLen, float grams, String& outLi
         clearDeviceKey();
         outLine1 = "Device removed";
         outLine2 = "Pair it again on the website";
-        return false;
+        return Sent::Failed;
     }
 
-    outLine1 = code > 0 ? "Error " + String(code) : "Server unreachable";
-    outLine2 = parsed ? String((const char*)(doc["message"] | ""))
-                      : (code > 0 ? "" : HTTPClient::errorToString(code));
-    return false;
+    Sent result = classify(code);
+    if (result == Sent::Failed) {
+        outLine1 = "Error " + String(code);
+        outLine2 = parsed ? String((const char*)(doc["message"] | "")) : "";
+    }
+    return result;
+}
+
+// ---------------------------------------------------------------- offline queue
+
+// A meal that couldn't be sent (no Wi-Fi, server down or too slow to wake,
+// clock not set yet) is kept in flash: the photo, its weight, when it was
+// taken and the local day. It's sent in the background once the server can
+// be reached, oldest first, one at a time (D-38). At most QUEUE_MAX meals;
+// cleared when the device is unpaired (they belong to that account).
+static constexpr int QUEUE_MAX = 10;
+static constexpr uint32_t QUEUE_RETRY_MIN_MS = 60UL * 1000, QUEUE_RETRY_MAX_MS = 30UL * 60 * 1000;
+static bool fsOk = false;
+static uint32_t queueRetryMs = 0, nextQueueTry = 0;
+static uint32_t queueSeq = 0;
+static volatile int queueResult = 0;    // HTTP status of a finished send, 0 = none
+static String queueBody, queueSentId, queueSentDate;
+
+static String queuePath(const String& id, const char* ext) { return "/q/" + id + ext; }
+
+// File names from a directory listing, without any leading path
+static String baseName(const char* name) {
+    String n = name;
+    int slash = n.lastIndexOf('/');
+    return slash >= 0 ? n.substring(slash + 1) : n;
+}
+
+static void queueInit() {
+    // The "spiffs" data partition of default_16MB.csv, formatted on first use
+    fsOk = LittleFS.begin(true, "/littlefs", 10, "spiffs");
+    if (!fsOk) {
+        Serial.println("Queue: no filesystem");
+        return;
+    }
+    if (!LittleFS.exists("/q")) LittleFS.mkdir("/q");
+    queueCount = 0;
+    File dir = LittleFS.open("/q");
+    for (File f = dir.openNextFile(); f; f = dir.openNextFile())
+        if (baseName(f.name()).endsWith(".jpg")) queueCount++;
+    Serial.printf("Queue: %d meal(s) waiting\n", queueCount);
+}
+
+// Oldest first: ids start with the zero-padded capture time, so they sort by name
+static String oldestQueued() {
+    String best;
+    File dir = LittleFS.open("/q");
+    for (File f = dir.openNextFile(); f; f = dir.openNextFile()) {
+        String n = baseName(f.name());
+        if (!n.endsWith(".jpg")) continue;
+        n = n.substring(0, n.length() - 4);
+        if (best.isEmpty() || n < best) best = n;
+    }
+    return best;
+}
+
+static bool enqueueMeal(const uint8_t* jpg, size_t len, float grams, uint32_t takenAt, const String& date) {
+    if (!fsOk || queueCount >= QUEUE_MAX) return false;
+    String id;
+    do {
+        char buf[24];
+        snprintf(buf, sizeof buf, "%010lu-%03lu", (unsigned long)takenAt, (unsigned long)(queueSeq++ % 1000));
+        id = buf;
+    } while (LittleFS.exists(queuePath(id, ".jpg")));
+
+    bool ok = false;
+    File j = LittleFS.open(queuePath(id, ".jpg"), FILE_WRITE);
+    if (j) {
+        ok = j.write(jpg, len) == len;
+        j.close();
+    }
+    File m = LittleFS.open(queuePath(id, ".txt"), FILE_WRITE);
+    if (m) {
+        m.printf("%.1f\n%lu\n%s\n", grams, (unsigned long)takenAt, date.c_str());
+        m.close();
+    } else {
+        ok = false;
+    }
+    if (!ok) {
+        LittleFS.remove(queuePath(id, ".jpg"));
+        LittleFS.remove(queuePath(id, ".txt"));
+        return false;
+    }
+    queueCount++;
+    Serial.printf("Queue: saved %s (%u bytes), %d waiting\n", id.c_str(), (unsigned)len, queueCount);
+    return true;
+}
+
+static void dropQueued(const String& id) {
+    LittleFS.remove(queuePath(id, ".jpg"));
+    LittleFS.remove(queuePath(id, ".txt"));
+    if (queueCount > 0) queueCount--;
+}
+
+static void clearQueue() {
+    if (!fsOk) return;
+    std::vector<String> names;
+    File dir = LittleFS.open("/q");
+    for (File f = dir.openNextFile(); f; f = dir.openNextFile()) names.push_back(baseName(f.name()));
+    dir.close();
+    for (size_t i = 0; i < names.size(); i++) LittleFS.remove("/q/" + names[i]);
+    queueCount = 0;
+}
+
+struct QueueReq { String key, id; };
+
+// Sends one queued meal. Runs in its own task, like the account check: a
+// cold backend takes 20-30s and the screen must stay live. Doesn't draw.
+static void queueTask(void* arg) {
+    QueueReq* req = (QueueReq*)arg;
+    int code = 400;  // unreadable item: dropped
+    String resp, date;
+    File m = LittleFS.open(queuePath(req->id, ".txt"));
+    File j = LittleFS.open(queuePath(req->id, ".jpg"));
+    if (m && j) {
+        float grams = m.readStringUntil('\n').toFloat();
+        uint32_t takenAt = strtoul(m.readStringUntil('\n').c_str(), nullptr, 10);
+        date = m.readStringUntil('\n');
+        date.trim();
+        size_t len = j.size();
+        uint8_t* jpg = (uint8_t*)ps_malloc(len);
+        if (!jpg) {
+            code = -1;  // out of memory: try again later
+        } else if (j.read(jpg, len) == len && grams > 0) {
+            size_t total = 0;
+            uint8_t* body = buildMealBody(jpg, len, grams, date, takenAt, total);
+            code = -1;
+            if (body) {
+                HTTPClient http;
+                WiFiClient plain;
+                WiFiClientSecure secure;
+                if (beginHttp(http, plain, secure, String(API_BASE_URL) + "/api/intake/device")) {
+                    http.setTimeout(HTTP_TIMEOUT);
+                    addDeviceHeaders(http, req->key);
+                    http.addHeader("Content-Type", String("multipart/form-data; boundary=") + BOUNDARY);
+                    ProgressStream stream(body, total, false);
+                    code = http.sendRequest("POST", &stream, total);
+                    if (code > 0) resp = http.getString();
+                    http.end();
+                }
+                free(body);
+            }
+        }
+        free(jpg);
+    }
+    if (m) m.close();
+    if (j) j.close();
+    Serial.printf("Queue: sent %s -> %d\n", req->id.c_str(), code);
+    queueSentId = req->id;
+    queueSentDate = date;
+    queueBody = resp;
+    delete req;
+    queueResult = code == 0 ? -1 : code;
+    queueBusy = false;
+    vTaskDelete(nullptr);
+}
+
+// One loop() step: handle a finished send, start the next when it's quiet
+static void queueLoop() {
+    int code = queueResult;
+    if (code != 0) {
+        queueResult = 0;
+        if (code == 401) {
+            clearDeviceKey();  // removed on the website: back to pairing (queue cleared)
+            return;
+        }
+        if (classify(code) == Sent::Retry) {
+            queueRetryMs = queueRetryMs ? min(queueRetryMs * 2, QUEUE_RETRY_MAX_MS) : QUEUE_RETRY_MIN_MS;
+            nextQueueTry = millis() + queueRetryMs;
+        } else {
+            dropQueued(queueSentId);  // sent, or rejected for good
+            queueRetryMs = 0;
+            nextQueueTry = millis() + 1500;  // the next one soon
+            if (code == 200) {
+                lastAccountCheck = millis();  // counts as an account check: the key works
+                accountRetryMs = 0;
+                JsonDocument doc;
+                if (!deserializeJson(doc, queueBody) && queueSentDate == localDate()) {
+                    intakeToday = doc["todayCalories"] | intakeToday;
+                    intakeGoal = doc["dailyGoal"] | 0;
+                    intakeDate = queueSentDate;
+                }
+            }
+        }
+    }
+    // One TLS connection at a time, and never while weighing or uploading
+    if (queueCount == 0 || queueBusy || accountCheckBusy || todayBusy || mode != Mode::Normal) return;
+    if (state == State::Uploading || state == State::Settling) return;
+    if (!fsOk || WiFi.status() != WL_CONNECTED || deviceKey.isEmpty() || !clockValid()) return;
+    if ((int32_t)(millis() - nextQueueTry) < 0) return;
+    String id = oldestQueued();
+    if (id.isEmpty()) {
+        queueCount = 0;
+        return;
+    }
+    queueBusy = true;
+    QueueReq* req = new QueueReq{deviceKey, id};
+    if (xTaskCreate(queueTask, "queue", 16384, req, 1, nullptr) != pdPASS) {
+        delete req;
+        queueBusy = false;
+        nextQueueTry = millis() + QUEUE_RETRY_MIN_MS;
+        Serial.println("Queue: no memory for task");
+    }
 }
 
 static void captureAndUpload() {
@@ -2269,6 +2529,8 @@ static void captureAndUpload() {
     uploadPhase = UploadPhase::Photo;
     setLed(0x000020);
     drawScreen();
+    uint32_t takenAt = clockValid() ? (uint32_t)time(nullptr) : 0;
+    String date = localDate();
 
     camera_fb_t* fb = esp_camera_fb_get();
     if (!fb) {
@@ -2293,10 +2555,27 @@ static void captureAndUpload() {
     }
     Serial.printf("Photo %u bytes, weight %.1f g\n", (unsigned)jpgLen, uploadedWeight);
 
-    bool ok = upload(jpg, jpgLen, uploadedWeight, line1, line2);
+    Sent sent = upload(jpg, jpgLen, uploadedWeight, date, takenAt, line1, line2);
+    if (sent == Sent::Retry) {
+        bool online = WiFi.status() == WL_CONNECTED;
+        if (enqueueMeal(jpg, jpgLen, uploadedWeight, takenAt, date)) {
+            free(jpg);
+            line1 = "Saved for later";
+            line2 = online ? "Uploads when the server answers" : "Uploads when back online";
+            state = State::Result;
+            setLed(0x201000);  // amber: kept, not lost
+            // The server just failed: give it a minute before the queue tries
+            queueRetryMs = QUEUE_RETRY_MIN_MS;
+            nextQueueTry = millis() + (online ? QUEUE_RETRY_MIN_MS : 0);
+            return;
+        }
+        line1 = online ? "Server unreachable" : "No Wi-Fi";
+        line2 = fsOk ? "Offline queue is full" : "Couldn't save it offline";
+        sent = Sent::Failed;
+    }
     free(jpg);
-    state = ok ? State::Result : State::Error;
-    setLed(ok ? 0x002000 : 0x200000);
+    state = sent == Sent::Done ? State::Result : State::Error;
+    setLed(sent == Sent::Done ? 0x002000 : 0x200000);
 }
 
 // ---------------------------------------------------------------- Wi-Fi
@@ -2349,6 +2628,7 @@ void setup() {
                   M5.Power.getBatteryLevel(), touchOk ? "enabled" : "disabled");
 
     prefs.begin("hts", false);
+    queueInit();
     brightness = constrain(prefs.getInt("bright", brightness), BRIGHT_MIN, BRIGHT_MAX);
     headYaw = constrain(prefs.getInt("yaw", headYaw), head::YAW_MIN, head::YAW_MAX);
     headPitch = constrain(prefs.getInt("pitch", headPitch), head::PITCH_MIN, head::PITCH_MAX);
@@ -2462,6 +2742,7 @@ void loop() {
     if (tapNow && !todayOpen && !tapped(intakeRingRect) && millis() - lastAccountCheck >= ACCOUNT_RECHECK_MIN_MS)
         startAccountCheck();
     todayLoop();
+    queueLoop();
 
     if (accountMenuOpen) {
         if (tapNow) {
@@ -2538,12 +2819,14 @@ void loop() {
                     line1 = "Camera not ready";
                     line2 = "Restart Stack-chan";
                     resultSince = millis();
-                } else if (WiFi.status() == WL_CONNECTED && !accountCheckBusy && !todayBusy) {
+                } else if (!accountCheckBusy && !todayBusy && !queueBusy) {
+                    // Offline or the server is down: the photo goes to the
+                    // offline queue and is sent later
                     captureAndUpload();
                     resultSince = millis();
                 }
-                // Offline: stay here (live view, weight shown) and upload as
-                // soon as Wi-Fi comes back while the food is still on the scale
+                // Another request is running: wait a moment (one TLS
+                // connection at a time)
             }
             break;
 

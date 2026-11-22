@@ -22,6 +22,14 @@ public class Device
     // re-pair replace the same account's old record instead of adding another.
     public string? HardwareId { get; set; }
 
+    // Reported by the device in request headers (Services/Food/DeviceStatus);
+    // null until a firmware that reports it has been in touch
+    public string? FirmwareVersion { get; set; }
+    public int? WifiRssi { get; set; }          // dBm
+    public bool? ScaleConnected { get; set; }
+    public int? PendingUploads { get; set; }    // meals saved offline, not yet sent
+    public DateTime? StatusAt { get; set; }
+
     // Revoked keys are kept (records still reference the device) but rejected
     public DateTime? RevokedAt { get; set; }
 }

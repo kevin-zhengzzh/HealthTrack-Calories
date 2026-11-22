@@ -217,6 +217,13 @@ export interface Device {
   lastSeenAt: string | null
   // Claimed with a pairing code, but the device hasn't collected its key yet
   awaitingDevice: boolean
+  // Reported by the device itself; null until a firmware that reports them
+  // has been in touch
+  firmwareVersion?: string | null
+  wifiRssi?: number | null // dBm
+  scaleConnected?: boolean | null
+  pendingUploads?: number | null // meals saved offline, not yet sent
+  statusAt?: string | null
 }
 
 // Returned once at pairing time; the server only keeps the key's hash
