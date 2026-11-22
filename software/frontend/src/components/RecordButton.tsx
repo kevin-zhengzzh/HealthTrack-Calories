@@ -6,10 +6,12 @@ import { WORKOUT_TYPES } from '../types'
 import { useLockBodyScroll } from '../hooks/useLockBodyScroll'
 import { inputClass, primaryBtn, secondaryBtn } from '../historyFormat'
 import { Modal } from './HistoryParts'
+import { useMediaQuery } from '../hooks/useMediaQuery'
+import { Link } from 'react-router-dom'
 
 // Floating + button on the Dashboard, Statistics, Plan, History and Device
-// pages. It opens a small menu: add a meal (typed in, without the scale) or
-// record a workout. The two dialogs' open state lives in the store, so the
+// pages. Two buttons fan out to its left — add a meal (typed in, without the
+// scale) or record a workout: on hover with a mouse, on tap on touch screens. The two dialogs' open state lives in the store, so the
 // dashboard cards' "+ Add meal" / "+ Record workout" open the same ones.
 // Saving bumps intakeRefreshKey / workoutRefreshKey so pages refetch.
 export default function RecordButton() {
@@ -17,6 +19,20 @@ export default function RecordButton() {
   const setRecordModalOpen = useStore((s) => s.setRecordModalOpen)
   const setMealModalOpen = useStore((s) => s.setMealModalOpen)
   const ref = useRef<HTMLDivElement>(null)
+  // Mouse users get the menu on hover; leaving closes it after a moment, so
+  // crossing the small gap between the buttons doesn't flicker it shut
+  const canHover = useMediaQuery('(hover: hover) and (pointer: fine)')
+  const closeTimer = useRef<number | undefined>(undefined)
+  const hoverOpen = () => {
+    if (!canHover) return
+    window.clearTimeout(closeTimer.current)
+    setMenuOpen(true)
+  }
+  const hoverClose = () => {
+    if (!canHover) return
+    closeTimer.current = window.setTimeout(() => setMenuOpen(false), 250)
+  }
+  useEffect(() => () => window.clearTimeout(closeTimer.current), [])
 
   // Close the menu on a click elsewhere or Esc
   useEffect(() => {
@@ -38,21 +54,13 @@ export default function RecordButton() {
 
   return (
     <>
-      <div ref={ref} className="fixed bottom-6 right-4 z-30 flex flex-col items-end gap-2">
-        {menuOpen && items.map((it) => (
-          <button
-            key={it.label}
-            type="button"
-            onClick={() => { setMenuOpen(false); it.open() }}
-            className="flex items-center gap-2 pl-3 pr-4 py-2 rounded-full shadow-lg bg-[var(--bg-surface)] text-sm font-semibold text-[var(--text-primary)] hover:bg-[var(--bg-inset)] cursor-pointer animate-[fadeUp_150ms_ease-out]"
-          >
-            <span className="w-7 h-7 rounded-full flex items-center justify-center text-sm" style={{ backgroundColor: it.color }} aria-hidden>{it.icon}</span>
-            {it.label}
-          </button>
-        ))}
+      {/* Row, right to left: the + itself, then Add meal, then Record workout */}
+      <div ref={ref} onMouseEnter={hoverOpen} onMouseLeave={hoverClose}
+        className="fixed bottom-6 right-4 z-30 flex flex-row-reverse items-center gap-2">
         <button
           type="button"
-          onClick={() => setMenuOpen((o) => !o)}
+          // With a mouse the menu opens on hover; a click then shouldn't shut it
+          onClick={() => setMenuOpen((o) => (canHover ? true : !o))}
           aria-label={menuOpen ? 'Close menu' : 'Add a meal or workout'}
           aria-expanded={menuOpen}
           title="Add a meal or workout"
@@ -61,6 +69,18 @@ export default function RecordButton() {
         >
           <span className={`text-2xl leading-none font-bold transition-transform duration-200 ${menuOpen ? 'rotate-45' : ''}`}>+</span>
         </button>
+        {menuOpen && items.map((it, i) => (
+          <button
+            key={it.label}
+            type="button"
+            onClick={() => { setMenuOpen(false); it.open() }}
+            className="flex items-center gap-2 pl-2 pr-4 py-2 rounded-full shadow-lg bg-[var(--bg-surface)] text-sm font-semibold text-[var(--text-primary)] hover:bg-[var(--bg-inset)] cursor-pointer whitespace-nowrap animate-[fadeLeft_160ms_ease-out_backwards]"
+            style={{ animationDelay: `${i * 40}ms` }}
+          >
+            <span className="w-7 h-7 rounded-full flex items-center justify-center text-sm" style={{ backgroundColor: it.color }} aria-hidden>{it.icon}</span>
+            {it.label}
+          </button>
+        ))}
       </div>
 
       <WorkoutModal />
@@ -183,7 +203,17 @@ function MealModal() {
   return (
     <Modal onClose={() => setOpen(false)}>
       <h2 className="text-xl font-bold text-[var(--text-primary)] mb-1">Add meal</h2>
-      <p className="text-sm text-[var(--text-muted)] mb-4">For food you didn't weigh on the scale. It's logged for today.</p>
+      <p className="text-sm text-[var(--text-muted)] mb-3">
+        For food you didn't weigh on the scale. It's logged for today, without a photo; calories = weight × kcal per
+        100 g (from the food label, for example).
+      </p>
+      <p className="text-xs text-[var(--text-secondary)] bg-[var(--bg-inset)] rounded-lg px-3 py-2 mb-4 leading-relaxed">
+        ⚖️ Have a Stack-chan scale? Put food on it and it's logged automatically, with a photo and the measured
+        weight.{' '}
+        <Link to="/device" onClick={() => setOpen(false)} className="font-semibold underline" style={{ color: 'var(--primary-text)' }}>
+          Pair it on the Device page →
+        </Link>
+      </p>
       <form onSubmit={submit} className="flex flex-col gap-4">
         <label className="flex flex-col gap-1 text-sm text-[var(--text-secondary)]">
           Food

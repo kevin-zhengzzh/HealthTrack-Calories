@@ -3,8 +3,8 @@ import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import type { CheckIn } from '../../src/types'
 
-const { getCheckInHistory } = vi.hoisted(() => ({ getCheckInHistory: vi.fn() }))
-vi.mock('../../src/api', () => ({ getCheckInHistory }))
+const { getCheckInHistory, getWorkoutHistory } = vi.hoisted(() => ({ getCheckInHistory: vi.fn(), getWorkoutHistory: vi.fn() }))
+vi.mock('../../src/api', () => ({ getCheckInHistory, getWorkoutHistory }))
 
 // Imported after the mock so History picks up the mocked api module.
 const { default: History } = await import('../../src/pages/History')
@@ -15,7 +15,12 @@ function makeCheckIns(dates: string[]): CheckIn[] {
 
 beforeEach(() => {
   getCheckInHistory.mockReset()
+  getWorkoutHistory.mockReset().mockResolvedValue([])
 })
+
+// The month cards' titles ("July 2026"); the heatmap above has its own heading
+const monthHeadings = () =>
+  screen.queryAllByRole('heading', { level: 2 }).map((h) => h.textContent).filter((t) => /^[A-Z][a-z]+ \d{4}$/.test(t ?? ''))
 
 describe('Check-ins tab', () => {
   it('shows an empty state when there are no check-ins', async () => {
@@ -25,12 +30,19 @@ describe('Check-ins tab', () => {
     expect(await screen.findByText(/No check-ins yet/)).toBeInTheDocument()
   })
 
+  it('shows the check-in heatmap above the month cards', async () => {
+    getCheckInHistory.mockResolvedValue(makeCheckIns(['2026-07-01']))
+    render(<History />)
+
+    expect(await screen.findByText(/check-ins? this (year|month)/)).toBeInTheDocument()
+  })
+
   it('groups check-ins by month, newest first, with a count per month', async () => {
     getCheckInHistory.mockResolvedValue(makeCheckIns(['2026-06-15', '2026-07-01', '2026-07-02']))
     render(<History />)
 
-    const headings = await screen.findAllByRole('heading', { level: 2 })
-    expect(headings.map((h) => h.textContent)).toEqual(['July 2026', 'June 2026'])
+    await screen.findByText('July 2026')
+    expect(monthHeadings()).toEqual(['July 2026', 'June 2026'])
     expect(screen.getByText('2 check-ins')).toBeInTheDocument()
     expect(screen.getByText('1 check-in')).toBeInTheDocument()
   })
@@ -41,12 +53,13 @@ describe('Check-ins tab', () => {
     const user = userEvent.setup()
     render(<History />)
 
-    expect(await screen.findAllByRole('heading', { level: 2 })).toHaveLength(10)
+    await screen.findByText('December 2025')
+    expect(monthHeadings()).toHaveLength(10)
     expect(screen.queryByText('January 2025')).not.toBeInTheDocument()
 
     await user.click(screen.getByRole('button', { name: /Show older months \(2 more\)/ }))
 
-    expect(screen.getAllByRole('heading', { level: 2 })).toHaveLength(12)
+    expect(monthHeadings()).toHaveLength(12)
     expect(screen.getByText('January 2025')).toBeInTheDocument()
     expect(screen.queryByRole('button', { name: /Show older/ })).not.toBeInTheDocument()
   })

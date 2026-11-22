@@ -135,7 +135,15 @@ export default function FoodLog() {
 
   return (
     <div className="flex flex-col gap-6">
-      {!loading && records.length > 0 && <SearchBox value={search} onChange={(v) => { setSearch(v); setShownDays(GROUPS_PER_PAGE) }} placeholder="Search by food…" />}
+      {!loading && records.length > 0 && (
+        <div className="flex flex-col gap-2">
+          <SearchBox value={search} onChange={(v) => { setSearch(v); setShownDays(GROUPS_PER_PAGE) }} placeholder="Search by food…" />
+          <p className="text-xs text-[var(--text-muted)] px-1">
+            Calories are estimates: the AI names the food from the photo, times the scale's weight. Tap ✎ to correct
+            an entry. <Link to="/disclaimer" className="underline">Disclaimer</Link>
+          </p>
+        </div>
+      )}
 
       {loading ? (
         <LoadingCard />

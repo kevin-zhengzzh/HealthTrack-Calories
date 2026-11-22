@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import ReactMarkdown from 'react-markdown'
+import { Link } from 'react-router-dom'
 import { getChatQuota, streamChat } from '../api'
 import type { ChatQuota, ChatTurn, GoalProposal } from '../types'
 import { useGoals } from '../goals'
@@ -112,6 +113,10 @@ function ProposalCard({ proposal }: { proposal: GoalProposal }) {
           </li>
         ))}
       </ul>
+      <p className="text-[11px] text-[var(--text-muted)] mb-2 leading-snug">
+        A suggestion, not medical advice. Check with a professional first if you're pregnant, under 18 or have a
+        health condition. <Link to="/disclaimer" className="underline">Disclaimer</Link>
+      </p>
       {state === 'applied' ? (
         <p className="text-xs font-medium" style={{ color: 'var(--primary-text)' }}>✓ Applied — see the Plan page.</p>
       ) : state === 'dismissed' ? (

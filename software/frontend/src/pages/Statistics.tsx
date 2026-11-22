@@ -1,18 +1,18 @@
 import { useEffect, useMemo, useState } from 'react'
-import { getCheckInHistory, getIntakeStats, getWorkoutHistory } from '../api'
+import { getIntakeStats, getWorkoutHistory } from '../api'
 import { useStore } from '../store'
-import type { CheckIn, IntakeStats, WorkoutRecord } from '../types'
+import type { IntakeStats, WorkoutRecord } from '../types'
 import { INTAKE_COLOR, useGoals } from '../goals'
 import { localDateStr } from '../intake'
 import { bars as makeBars, periodRange, summarize, type PeriodKind } from '../stats'
 import PeriodBarChart from '../components/PeriodBarChart'
-import CheckInHeatmap from '../components/CheckInHeatmap'
-import WeeklySummaryCard from '../components/WeeklySummaryCard'
 
 // Trends, like a bookkeeping app: Intake or Burned, by calendar week, month
 // or year, stepping back through earlier periods. Total and daily average
 // (logged days only), a bar chart against the daily goal, and what made up
-// the period (top foods / workout types).
+// the period (top foods / workout types). Last week's AI summary sits under
+// the sidebar and the check-in heatmap on the Check-ins tab: neither follows
+// this page's period or Intake/Burned switch.
 
 type Measure = 'intake' | 'burn'
 
@@ -29,7 +29,6 @@ export default function Statistics() {
   const [kind, setKind] = useState<PeriodKind>('week')
   const [offset, setOffset] = useState(0)
   const [workouts, setWorkouts] = useState<WorkoutRecord[] | null>(null)
-  const [checkIns, setCheckIns] = useState<CheckIn[]>([])
   const [intake, setIntake] = useState<{ key: string; stats: IntakeStats } | null>(null)
 
   const today = new Date()
@@ -39,7 +38,6 @@ export default function Statistics() {
 
   useEffect(() => {
     getWorkoutHistory().then(setWorkouts).catch(console.error)
-    getCheckInHistory().then(setCheckIns).catch(console.error)
   }, [workoutRefreshKey])
 
   useEffect(() => {
@@ -155,10 +153,6 @@ export default function Statistics() {
           </ol>
         )}
       </section>
-
-      <WeeklySummaryCard />
-
-      <CheckInHeatmap checkIns={checkIns} records={workouts ?? []} />
     </div>
   )
 }

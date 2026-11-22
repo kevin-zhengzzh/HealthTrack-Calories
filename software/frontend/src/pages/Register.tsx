@@ -1,4 +1,5 @@
 import { useState } from 'react'
+import LegalFooter from '../components/LegalFooter'
 import { Link, useNavigate } from 'react-router-dom'
 import { register } from '../api'
 import { useStore } from '../store'
@@ -69,11 +70,16 @@ export default function Register() {
               {submitting ? 'Creating account…' : 'Register'}
             </button>
           </form>
+          <p className="text-xs text-[var(--text-muted)] mt-3 text-center leading-relaxed">
+            HealthTrack gives estimates, not medical advice. By signing up you confirm you've read the{' '}
+            <Link to="/disclaimer" className="underline">health disclaimer</Link>.
+          </p>
           <p className="text-sm text-[var(--text-muted)] mt-4 text-center">
             Already have an account? <Link to="/login" className="hover:underline" style={{ color: 'var(--primary)' }}>Sign in</Link>
           </p>
         </div>
       </div>
+      <LegalFooter />
     </div>
   )
 }

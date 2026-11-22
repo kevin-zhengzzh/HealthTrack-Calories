@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
+import { Link } from 'react-router-dom'
 import { updateProfile } from '../api'
 import InfoTip from '../components/InfoTip'
 import { INTAKE_COLOR, MAX_GOAL_PER_DAY, MAX_GOAL_PER_WEEK, perDay, useGoals, type Goal } from '../goals'
@@ -450,6 +451,11 @@ export default function Plan() {
         <h1 className="text-3xl font-bold text-[var(--text-primary)]">Plan</h1>
         <p className="text-sm text-[var(--text-muted)] mt-1">
           Your daily goals, and where they'd take you in a year. Goals carry over until you change them.
+        </p>
+        <p className="text-xs text-[var(--text-muted)] mt-1">
+          Every figure here is an estimate, not medical advice — check with a professional before a big change,
+          especially if you're pregnant, under 18 or have a health condition.{' '}
+          <Link to="/disclaimer" className="underline">Disclaimer</Link>
         </p>
       </div>
 

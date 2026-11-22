@@ -256,6 +256,13 @@ Phase 2 的 `msa-backend` / `msa-frontend` 和它的 `neondb` 库**保持不动*
 - **提示词**：总的每日变化 = 摄入 −（基础消耗 + 每周消耗目标 ÷ 7），不超过约 500 kcal；第一次本地实测模型只按基础消耗算，加上运动后缺口约 690，已在提示词里写明运动也算进缺口。
 - 本地用真实 DeepSeek 端到端测过：问目标 → 回答"慢慢减" → 卡片出现时数据库没变 → Apply 后两个目标写入，Plan 页同步更新。
 
+### D-35 周总结和签到热力图搬离 Statistics；+ 按钮悬停横向展开；免责说明（2026-11-22）
+- **签到热力图** → History → Check-ins 标签顶部（该标签现在也拉取运动记录，热力图按当天运动消耗着色）。
+- **"Last week" AI 周总结** → 宽屏时在**侧边栏导航下面**（`WeeklySummaryCard compact`：日期和 "AI summary" 合成一行小字，正文超高时在卡片内滚动）；手机上侧边栏是顶部横条，放在每页顶部太吵，所以放在首页最下面。用 `hooks/useMediaQuery` 只渲染其中一个，不会请求两次。Statistics 页只剩图表和排行。
+- **右下角 +**：鼠标设备（`(hover: hover) and (pointer: fine)`）**悬停**即向左横向展开 Record workout · Add meal（离开 250ms 后收起，跨过间隙不闪）；触屏仍点击展开。横向展开不再盖住上面的"回到顶部"按钮。
+- **Add meal 弹窗**：说明手动记录没有照片、热量 = 克数 × kcal/100g；灰底提示 "Have a Stack-chan scale? … Pair it on the Device page →"。
+- **免责说明（待办里的 1–5 全做）**：公开页面 `/disclaimer`（登录前后都能打开）；`LegalFooter` "Estimates only, not medical advice · Disclaimer" 放在所有登录后页面、登录页、注册页底部，首页（未登录的 Landing）原有页脚也加上；注册按钮下一行告知；AI 计划卡片 Apply 上方提醒；Plan 页标题下一句；Food Log 搜索框下说明热量来源和 ✎ 修正。
+
 ### D-14 部署工作流暂时只能手动触发（2026-11-18；2026-11-19 已恢复自动部署）
 - **决定**：`deploy.yml` 只保留 `workflow_dispatch`。
 - **原因**：最初镜像名和应用名都指向 Phase 2，自动部署会覆盖线上服务。现在已改为 `healthtrack-*`，并且首次部署已成功。
@@ -297,6 +304,8 @@ Phase 2 的 `msa-backend` / `msa-frontend` 和它的 `neondb` 库**保持不动*
 | 2026-11-22 | 首页 Burned / Net 计入基础消耗（D-29）；本地截图检查了三种情况（有身体数据 ± 运动、无身体数据）和手机布局 |
 | 2026-11-22 | Device 页、手动记一餐、+ 菜单（D-30）；History 统一样式（D-31）；首页 Today / This week（D-32）；Statistics 周/月/年重做（D-33）。后端 159 / 前端 54 个测试，本地 Playwright 截图检查了宽屏和手机 |
 | 2026-11-22 | AI 助手：Set my plan（提案 + Apply 卡片，D-34）；后端 164 / 前端 56 个测试；本地用真实模型端到端验证 |
+| 2026-11-22 | PR #10（History 标签、浮动滚动条）、#11（基础消耗、Statistics、Device 页、History 统一样式、Points 标签）、#12（AI Set my plan）合并，均自动部署成功（最新 `b2fa03c`）。存档：待办新增 4 项（Statistics 下两块挪走、+ 按钮悬停横向展开、Add meal 说明和设备入口、免责说明），下次从这里开始 |
+| 2026-11-22 | 4 项待办完成（D-35）：周总结进侧边栏、热力图进 Check-ins、+ 悬停横向展开、Add meal 说明、免责说明页和各处提醒；前端 57 个测试，本地截图检查了宽屏、手机、注册页和说明页 |
 | 2026-11-21 | 统计/首页改版三步计划的第 1 步：Plan 页 + 目标按周存储（D-24，迁移 `WeeklyIntakeGoal`，共 141 个测试）。第 2 步首页改版、第 3 步统计页（Intake/Burned 切换，自然周/月/年可往回翻，日均只算有记录的天，排行榜） |
 
 ---
@@ -356,7 +365,10 @@ Phase 2 的 `msa-backend` / `msa-frontend` 和它的 `neondb` 库**保持不动*
 - [ ] 设备上的摄入圆环只在上传/账号检查时更新，网页改动要碰一下设备才显示（D-21，目前可接受）
 - [ ] README 补充智能秤功能说明
 - [ ] 识别失败（或误判为非食物）的照片是否要保留供人工确认
-- [ ] **免责说明**（2026-11-22 讨论，用户说"之后做"）。现有：聊天底部 "AI answers can be wrong. Not medical advice."、Plan 预测 "A rough estimate, not medical advice."。计划加（文案英文）：
+- [x] **Statistics 页下面两块挪走**（2026-11-22 已完成，见 D-35）（2026-11-22 用户提出）："Last week" AI 周总结和签到热力图不跟随页面的周/月/年和 Intake/Burned 切换，放在统计页里显得不搭。我的初步想法（未定）：签到热力图 → History → Check-ins 标签顶部（本来就是签到记录，热力图自带月/年切换）；AI 周总结 → 首页底部，或者做成 AI 助手里"上周回顾"的内容，或单独放进侧边栏。做之前和用户确认放哪里。
+- [x] **右下角 + 按钮改交互**（2026-11-22 已完成，见 D-35）（2026-11-22 用户提出）：鼠标**悬停**就**向左**横向弹出 Add meal / Record workout 两个按钮（现在是点击后向上弹出，会盖住上面的"回到顶部"按钮）。手机上没有悬停，仍然点击展开。
+- [x] **Add meal 弹窗加设备入口和说明**（2026-11-22 已完成，见 D-35）（2026-11-22 用户提出）：例如 "Have a Stack-chan scale? Weigh food on it and it's logged with a photo automatically — pair it on the Device page →"，说明手动添加和秤自动记录的区别（手动没有照片，热量 = 克数 × kcal/100g）。
+- [x] **免责说明**（2026-11-22 已完成，见 D-35）（2026-11-22 讨论，用户说"之后做"）。现有：聊天底部 "AI answers can be wrong. Not medical advice."、Plan 预测 "A rough estimate, not medical advice."。计划加（文案英文）：
   1. 新页 `/disclaimer` + 每页底部（含登录/注册）一行 "Not medical advice · Disclaimer"：不是医疗服务；热量/基础消耗/预测/AI 建议都是估算；怀孕或哺乳、未满 18 岁、慢性病、进食障碍史者先咨询专业人士；不适时停止运动
   2. 注册按钮下一行告知并链到说明页（不加勾选框）
   3. AI 计划卡片 Apply 上方："A suggestion, not medical advice. Check with a professional if you're pregnant, under 18 or have a health condition."（唯一会写数据的地方，最必要）

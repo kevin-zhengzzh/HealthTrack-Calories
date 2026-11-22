@@ -1,18 +1,23 @@
 import { useEffect, useMemo, useState } from 'react'
-import { getCheckInHistory } from '../api'
-import type { CheckIn } from '../types'
+import { getCheckInHistory, getWorkoutHistory } from '../api'
+import type { CheckIn, WorkoutRecord } from '../types'
+import CheckInHeatmap from '../components/CheckInHeatmap'
 import { EmptyCard, GroupCard, LoadingCard, Row, ShowMore, Tile } from '../components/HistoryParts'
 import { formatDay, formatMonth, formatTime, groupBy, GROUPS_PER_PAGE } from '../historyFormat'
 
-// The Check-ins tab of History. One check-in a day, so the cards are per
-// month (a card per day would hold a single row); rows look like the Food Log.
+// The Check-ins tab of History: the year/month heatmap on top, then one
+// check-in a day, so the cards are per month (a card per day would hold a
+// single row); rows look like the Food Log.
 export default function History() {
   const [history, setHistory] = useState<CheckIn[]>([])
+  // The heatmap shades check-in days by that day's workout calories
+  const [workouts, setWorkouts] = useState<WorkoutRecord[]>([])
   const [loading, setLoading] = useState(true)
   const [shownMonths, setShownMonths] = useState(GROUPS_PER_PAGE)
 
   useEffect(() => {
     getCheckInHistory().then(setHistory).catch(console.error).finally(() => setLoading(false))
+    getWorkoutHistory().then(setWorkouts).catch(console.error)
   }, [])
 
   const months = useMemo(
@@ -27,7 +32,9 @@ export default function History() {
       ) : history.length === 0 ? (
         <EmptyCard title="No check-ins yet">Check in from the Dashboard — each day you do shows up here.</EmptyCard>
       ) : (
-        months.slice(0, shownMonths).map(([month, items]) => (
+        <>
+        <CheckInHeatmap checkIns={history} records={workouts} />
+        {months.slice(0, shownMonths).map(([month, items]) => (
           <GroupCard key={month} title={formatMonth(month)} total={`${items.length} check-in${items.length !== 1 ? 's' : ''}`}>
             {items.map((c) => (
               <Row
@@ -38,7 +45,8 @@ export default function History() {
               />
             ))}
           </GroupCard>
-        ))
+        ))}
+        </>
       )}
 
       <ShowMore shown={shownMonths} total={months.length} onMore={() => setShownMonths((n) => n + GROUPS_PER_PAGE)} noun="months" />

@@ -22,6 +22,8 @@ import Records from './pages/Records'
 import Plan from './pages/Plan'
 import Statistics from './pages/Statistics'
 import Devices from './pages/Devices'
+import Disclaimer from './pages/Disclaimer'
+import LegalFooter from './components/LegalFooter'
 import Landing from './pages/Landing'
 
 // Home / Statistics / Plan / History (Food Log, Workouts, Check-ins tabs) / Device share the sidebar and are
@@ -233,6 +235,7 @@ function PrivateLayout() {
             </Routes>
           </main>
         </div>
+        <LegalFooter className="pb-24" />
       </div>
       {storeOpen && <StoreModal onClose={() => setStoreOpen(false)} />}
       <ChatWidget />
@@ -249,6 +252,8 @@ export default function App() {
       <Routes>
         <Route path="/login" element={token ? <Navigate to="/" replace /> : <Login />} />
         <Route path="/register" element={token ? <Navigate to="/" replace /> : <Register />} />
+        {/* Public: linked from every page's footer and from sign-up */}
+        <Route path="/disclaimer" element={<Disclaimer />} />
         <Route path="/*" element={<PrivateLayout />} />
       </Routes>
     </BrowserRouter>
