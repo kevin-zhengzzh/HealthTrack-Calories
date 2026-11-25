@@ -357,6 +357,7 @@ Phase 2 的 `msa-backend` / `msa-frontend` 和它的 `neondb` 库**保持不动*
 | 2026-11-22 | 本地 AI 研究项目 `E:\CodeLearning\LocalAI`（Ollama + Qwen3 8B，模型在 `D:\LocalAI\models`）：HealthTrack 式工具调用测试全过，关思考 4.5 秒/题。本项目**没改代码**；本地后端设 `DeepSeek__BaseUrl=http://localhost:11434/v1` 等即可切过去（见 LocalAI 的 `docs/healthtrack.md`），要关思考需新增可选配置 `DeepSeek:ReasoningEffort`。存档：用户说先不做集成 |
 | 2026-11-21 | 统计/首页改版三步计划的第 1 步：Plan 页 + 目标按周存储（D-24，迁移 `WeeklyIntakeGoal`，共 141 个测试）。第 2 步首页改版、第 3 步统计页（Intake/Burned 切换，自然周/月/年可往回翻，日均只算有记录的天，排行榜） |
 | 2026-11-25 | 自托管部署文件 `deploy/vps/`（D-39）；README 按现在的项目重写（Phase 2 提交时的 README 存为 `specs/07-phase2-submission-readme.md`）；英文版 AGENTS.en.md |
+| 2026-11-26 | PR #19 合并（`bbe3b8f`），VPS 自动部署跑通：第一次因为 GitHub Secrets 没加好在 "Set up SSH" 失败，换了一把部署密钥、补好 Secrets 后 Re-run failed jobs，build / azure / vps 全部成功，`/api/health` 返回 `version: bbe3b8f`，两套部署的网页标题都变成 HealthTrack |
 | 2026-11-26 | 英文版改名为 `AGENTS.md`（主文件，agent 工具会自动读取），中文版改名为 `AGENTS.cn.md` |
 | 2026-11-26 | VPS 接入 CI/CD（D-40）：`deploy.yml` 拆成 build → azure / vps 并行，forced command 限定部署密钥，`/api/health` 带版本号；本地验证了 compose 配置、tag 校验（拒绝 `abc1234;rm` 等）和 health 返回值，177 个测试通过 |
 | 2026-11-26 | PR #17 合并；VPS 上线：DigitalOcean 悉尼 2GB（`209.38.84.117`）+ Cloudflare 注册的 `kevinzheng.dev`（灰色云朵），Caddy 自动拿到证书，www 和 http 都跳转到 https://kevinzheng.dev。注册、签到、AI 助手（DeepSeek）、手机拍照识别（Claude，香蕉 89 kcal/100g）都在线上验证过；每天 3:00 UTC cron 备份。网页标题 "frontend" 改为 "HealthTrack" |
@@ -398,6 +399,8 @@ Phase 2 的 `msa-backend` / `msa-frontend` 和它的 `neondb` 库**保持不动*
 - **Playwright 按钮名默认是子串匹配**：`get_by_role('button', name='Add')` 同时匹配 "+ Add meal" 和 "Add a meal or workout"，严格模式报错；要加 `exact=True`。另外 multipart 请求的 `post_data_buffer` 取不到大小（是 0），要看上传多大去查数据库里的 `length("ImageData")`。
 - **隐藏但仍占布局的元素会把手机页面撑宽**：`InfoTip` 原来用 `invisible`（visibility: hidden）藏气泡，气泡还在布局里；靠右的 "?" 的 256px 气泡伸出屏幕 81px，Plan 页宽度变成 456px，手机浏览器（微信里打开）就把整页缩小，看起来字小、右边空一条。现在气泡只在打开时渲染，打开后测量位置并平移回屏幕内（左右留 8px）。查这类问题：手机宽度下比较 `document.documentElement.scrollWidth` 和 `clientWidth`，再找 `getBoundingClientRect().right` 超出的元素。
 - **前端测试要在 PowerShell 里跑**：在 Git Bash 里 `npm test` 报 "Vitest failed to find the runner"（全部失败，不是代码问题）。
+- **新增 GitHub Secret 后，合并之前先截一张 Repository secrets 列表确认**：Secret 写进去后谁都看不到内容，工作流里读到空值才会报错。VPS 自动部署第一次就是因为 `VPS_SSH_KEY` / `VPS_KNOWN_HOSTS` 没加好，在 "Set up SSH" 失败（工作流会明确提示）。也要确认加在 **Secrets → Repository secrets**，不是 Variables 或 Environment secrets。
+- **部署密钥的本地副本要等部署真正跑通再删**：太早删了，Secret 又没加好，就只能重新生成一把、服务器上换锁（`sed -i '/github-actions-deploy$/d' ~/.ssh/authorized_keys` 再追加新的）。验证 forced command：用部署密钥 `ssh root@<ip> whoami`，应该得到 `usage: deploy.sh <commit-sha>`，而不是 `root`。
 - **EF Core 的 `ExecuteDeleteAsync`** 内存测试库不支持；需要在测试里跑到的代码改用加载后 `RemoveRange`。
 
 ---
