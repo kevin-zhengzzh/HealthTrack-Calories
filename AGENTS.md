@@ -65,6 +65,7 @@ ConnectionStrings__DefaultConnection="Host=localhost;Port=5432;Database=healthtr
 | Azure | 资源组 `msa-phase2`，环境 `managedEnvironment-msaphase2-a491`（与 Phase 2 共用），Container Apps `healthtrack-backend` / `healthtrack-frontend`，副本 0–1 |
 | 镜像 | Docker Hub `kevinzheng123/healthtrack-calories`（Public），标签 `backend-<sha>` / `frontend-<sha>` |
 | 数据库 | Neon 项目 `msa-phase2`，production 分支下的独立数据库 `healthtrack_calories` |
+| 自托管 | https://kevinzheng.dev：DigitalOcean Droplet `healthtrack`（悉尼，2GB，`209.38.84.117`，SSH 密钥登录 root），代码在 `/root/HealthTrack-Calories`，配置在 `deploy/vps/.env`（只在服务器上）；域名和 DNS 在 Cloudflare（D-39） |
 | 后端机密 | `db-connection`、`jwt-key`、`deepseek-api-key`、`healthtrack-prod`（Anthropic key）→ 环境变量 `ConnectionStrings__DefaultConnection` / `Jwt__Key` / `DeepSeek__ApiKey` / `Anthropic__ApiKey` |
 | GitHub Secrets | `DOCKERHUB_USERNAME`、`DOCKERHUB_TOKEN`、`AZURE_CREDENTIALS`（服务主体，仅限资源组 `msa-phase2`） |
 
@@ -289,7 +290,7 @@ Phase 2 的 `msa-backend` / `msa-frontend` 和它的 `neondb` 库**保持不动*
 - **已知问题（未修，用户说先不改）**：补传的照片如果被判定为"不是食物"，服务器返回 200 + isFood=false、什么都不记，设备也不提示——那条就悄悄没了（测试时两条只记上一条，最可能就是这个原因；补传任务只打印状态码、没打印回复，无法确认）。可选的修法：①补传时打印回复 + 主画面提示 "1 saved photo wasn't recognised as food"；②补传的非食物照片存成 Unnamed food 让用户自己处理（会放宽 D-05）。
 
 ### D-39 在一台 VPS 上自托管第二套部署，与 Azure 互不影响（2026-11-25）
-- **决定**：`deploy/vps/`：DigitalOcean 悉尼 2GB Ubuntu + 自己的 .com 域名（Cloudflare 注册，DNS only）；Docker Compose 跑 Caddy + 后端 + 前端 + Postgres。Caddy 自动申请 Let's Encrypt 证书，同一个域名下 `/api/*` 转给后端、其余转给前端（同源，不涉及 CORS）；只开 22/80/443，数据库不对外。空库开始，`backup.sh` 每天 pg_dump，保留 14 份。在服务器上 `git pull && docker compose up -d --build` 更新（暂不做自动部署）。
+- **决定**：`deploy/vps/`：DigitalOcean 悉尼 2GB Ubuntu + 自己的域名 `kevinzheng.dev`（Cloudflare 注册，DNS only；.com 已被占用）；Docker Compose 跑 Caddy + 后端 + 前端 + Postgres。Caddy 自动申请 Let's Encrypt 证书，同一个域名下 `/api/*` 转给后端、其余转给前端（同源，不涉及 CORS）；只开 22/80/443，数据库不对外。空库开始，`backup.sh` 每天 pg_dump，保留 14 份。在服务器上 `git pull && docker compose up -d --build` 更新（暂不做自动部署）。
 - **原因**：用户投 web hosting 公司的岗位，JD 要求 Linux、hosting、域名/DNS；自己从零搭一遍才有真实经历可讲。Azure 那套（D-13）保持不动。
 - **共用**：代码、DeepSeek/Anthropic Key（每日上限仍然有效）。账号和数据不互通。
 - **设备**：Stack-chan 仍连 Azure。改连 VPS 需要把 ISRG Root X1 加进 `root_ca.h`（D-38）。
@@ -346,6 +347,7 @@ Phase 2 的 `msa-backend` / `msa-frontend` 和它的 `neondb` 库**保持不动*
 | 2026-11-22 | 本地 AI 研究项目 `E:\CodeLearning\LocalAI`（Ollama + Qwen3 8B，模型在 `D:\LocalAI\models`）：HealthTrack 式工具调用测试全过，关思考 4.5 秒/题。本项目**没改代码**；本地后端设 `DeepSeek__BaseUrl=http://localhost:11434/v1` 等即可切过去（见 LocalAI 的 `docs/healthtrack.md`），要关思考需新增可选配置 `DeepSeek:ReasoningEffort`。存档：用户说先不做集成 |
 | 2026-11-21 | 统计/首页改版三步计划的第 1 步：Plan 页 + 目标按周存储（D-24，迁移 `WeeklyIntakeGoal`，共 141 个测试）。第 2 步首页改版、第 3 步统计页（Intake/Burned 切换，自然周/月/年可往回翻，日均只算有记录的天，排行榜） |
 | 2026-11-25 | 自托管部署文件 `deploy/vps/`（D-39）；README 按现在的项目重写（Phase 2 提交时的 README 存为 `specs/07-phase2-submission-readme.md`）；英文版 AGENTS.en.md |
+| 2026-11-26 | PR #17 合并；VPS 上线：DigitalOcean 悉尼 2GB（`209.38.84.117`）+ Cloudflare 注册的 `kevinzheng.dev`（灰色云朵），Caddy 自动拿到证书，www 和 http 都跳转到 https://kevinzheng.dev。注册、签到、AI 助手（DeepSeek）、手机拍照识别（Claude，香蕉 89 kcal/100g）都在线上验证过；每天 3:00 UTC cron 备份。网页标题 "frontend" 改为 "HealthTrack" |
 
 ---
 
