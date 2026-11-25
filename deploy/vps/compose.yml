@@ -63,8 +63,9 @@ services:
     build:
       context: ../../software/frontend
       args:
-        # Same origin as the site, so the browser calls https://DOMAIN/api/...
-        VITE_API_URL: https://${DOMAIN}
+        # Same origin as the site, so the browser calls
+        # https://healthtrack.DOMAIN/api/... (see Caddyfile)
+        VITE_API_URL: https://healthtrack.${DOMAIN}
     restart: unless-stopped
 
 volumes:

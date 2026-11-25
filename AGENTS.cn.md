@@ -67,7 +67,7 @@ ConnectionStrings__DefaultConnection="Host=localhost;Port=5432;Database=healthtr
 | Azure | 资源组 `msa-phase2`，环境 `managedEnvironment-msaphase2-a491`（与 Phase 2 共用），Container Apps `healthtrack-backend` / `healthtrack-frontend`，副本 0–1 |
 | 镜像 | Docker Hub `kevinzheng123/healthtrack-calories`（Public），标签 `backend-<sha>` / `frontend-<sha>` |
 | 数据库 | Neon 项目 `msa-phase2`，production 分支下的独立数据库 `healthtrack_calories` |
-| 自托管 | https://kevinzheng.dev：DigitalOcean Droplet `healthtrack`（悉尼，2GB，`209.38.84.117`，SSH 密钥登录 root），代码在 `/root/HealthTrack-Calories`，配置在 `deploy/vps/.env`（只在服务器上）；域名和 DNS 在 Cloudflare（D-39） |
+| 自托管 | https://healthtrack.kevinzheng.dev（主域名 302 跳转过来，D-41）：DigitalOcean Droplet `healthtrack`（悉尼，2GB，`209.38.84.117`，SSH 密钥登录 root），代码在 `/root/HealthTrack-Calories`，配置在 `deploy/vps/.env`（只在服务器上）；域名和 DNS 在 Cloudflare（D-39） |
 | 后端机密 | `db-connection`、`jwt-key`、`deepseek-api-key`、`healthtrack-prod`（Anthropic key）→ 环境变量 `ConnectionStrings__DefaultConnection` / `Jwt__Key` / `DeepSeek__ApiKey` / `Anthropic__ApiKey` |
 | GitHub Secrets | `DOCKERHUB_USERNAME`、`DOCKERHUB_TOKEN`、`AZURE_CREDENTIALS`（服务主体，仅限资源组 `msa-phase2`） |
 
@@ -305,6 +305,13 @@ Phase 2 的 `msa-backend` / `msa-frontend` 和它的 `neondb` 库**保持不动*
 - **新接口** `GET /api/health`：检查数据库能否连接，返回 `{status, version}`，`version` 来自环境变量 `APP_VERSION`（compose 里设为 `TAG`；Azure 上没设，为 null）。
 - **手动**：服务器上 `./deploy.sh <sha>` 回滚到任何部署过的版本；`TAG=local docker compose up -d --build` 从源码构建（测试分支时用）。
 - **坑**：`deploy.sh` 包在 `{ … }` 里，让 shell 先读完整个脚本再执行，因为脚本里的 `git pull` 可能替换它自己。
+
+### D-41 应用搬到子域名 `healthtrack.kevinzheng.dev`，主域名留给作品集（2026-11-26）
+- **决定**：Caddyfile 里应用用 `healthtrack.{$DOMAIN}`；`kevinzheng.dev` 和 `www` 暂时 **302** 跳转过去。`.env` 的 `DOMAIN` 仍是主域名（不用改），VPS 前端的 API 地址和部署的健康检查改成子域名（`compose.yml`、`deploy.yml` 的 `VPS_URL`）。DNS 多一条 A 记录 `healthtrack`（灰色云朵）。
+- **原因**：以后作品集放在 `kevinzheng.dev`（简历上只写这一个），每个项目一个子域名。趁网址还没传出去先改。用 302 而不是 301：301 会被浏览器和搜索引擎永久缓存，以后主域名换成作品集时，访问过的人还会被带去旧地址。
+- **作品集**：打算做成静态网站放 Cloudflare Pages / GitHub Pages，届时把主域名的 DNS 指过去，和服务器互不影响。
+- **部署**：Caddy 只在容器启动时读 Caddyfile，所以先单独合并了一个 PR，让 `deploy.sh` 在 Caddyfile 变化时先 `caddy validate` 再重建 Caddy 容器（用 `.caddyfile-applied` 记录上次应用的哈希）；切换子域名的 PR 再合并时由新脚本生效。
+- **代价**：浏览器里登录状态存在旧网址下（localStorage 按域名隔离），切换后要重新登录一次。
 
 ### D-14 部署工作流暂时只能手动触发（2026-11-18；2026-11-19 已恢复自动部署）
 - **决定**：`deploy.yml` 只保留 `workflow_dispatch`。

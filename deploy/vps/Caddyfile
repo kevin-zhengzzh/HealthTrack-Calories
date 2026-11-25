@@ -1,4 +1,7 @@
-{$DOMAIN} {
+# DOMAIN is the bare domain (e.g. kevinzheng.dev). Each app gets its own
+# subdomain; the bare domain is kept for a portfolio site.
+
+healthtrack.{$DOMAIN} {
 	encode gzip
 
 	# Photos are uploaded through the API; allow up to 10 MB per request.
@@ -15,7 +18,9 @@
 	}
 }
 
-# Redirect www to the bare domain.
-www.{$DOMAIN} {
-	redir https://{$DOMAIN}{uri} permanent
+# Until the portfolio exists, the bare domain points to the app. Temporary
+# (302) on purpose: browsers and search engines don't cache it, so the bare
+# domain can be reused later.
+{$DOMAIN}, www.{$DOMAIN} {
+	redir https://healthtrack.{$DOMAIN}{uri} 302
 }

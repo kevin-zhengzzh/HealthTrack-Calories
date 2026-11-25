@@ -10,8 +10,9 @@ Internet ──443/80──► Caddy ──/api/*──► backend (.NET, :5000)
 
 - **Caddy** gets and renews a Let's Encrypt certificate for the domain
   automatically and redirects HTTP to HTTPS.
-- Site and API share one origin (`https://DOMAIN` and `https://DOMAIN/api`), so
-  no CORS is involved.
+- The app lives at `https://healthtrack.DOMAIN` (site and API on one origin,
+  `/api` goes to the backend, so no CORS). The bare domain and `www` redirect
+  there for now (302); the bare domain is kept for a portfolio site.
 - Only ports 22, 80 and 443 are open. Postgres is not reachable from outside.
 - The database starts empty; migrations run when the backend starts.
 - Stack-chan devices keep talking to the Azure backend. Pointing one at this
@@ -46,7 +47,7 @@ docker compose up -d --build
 docker compose logs -f caddy backend   # wait for "certificate obtained successfully"
 ```
 
-Then open `https://DOMAIN` and register a new account.
+Then open `https://healthtrack.DOMAIN` and register a new account.
 
 ## Automatic deploys (GitHub Actions)
 
@@ -57,7 +58,7 @@ parallel:
 ```
 build ──► Docker Hub: backend-<sha>, vps-frontend-<sha>
   └─► vps job ──SSH──► deploy.sh <sha> ──► git pull, docker compose pull + up
-          └─► waits for https://DOMAIN/api/health to report version <sha>
+          └─► waits for https://healthtrack.DOMAIN/api/health to report version <sha>
 ```
 
 The server never builds anything; it only pulls images. `TAG` in `.env`
