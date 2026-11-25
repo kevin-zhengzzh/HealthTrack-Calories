@@ -38,6 +38,21 @@ fi
 
 docker compose pull -q backend frontend
 docker compose up -d --remove-orphans
+
+# Caddy only reads the Caddyfile when its container starts, and `up` doesn't
+# recreate it for a changed file. When the Caddyfile differs from the one last
+# applied, validate it first (a typo would take the whole site down), then
+# recreate Caddy. Certificates live in a volume, so nothing is re-issued.
+applied=.caddyfile-applied
+current=$(sha256sum Caddyfile | cut -d' ' -f1)
+if [ "$current" != "$(cat "$applied" 2>/dev/null || true)" ]; then
+  docker compose run --rm --no-deps caddy \
+    caddy validate --config /etc/caddy/Caddyfile --adapter caddyfile
+  docker compose up -d --no-deps --force-recreate caddy
+  echo "$current" > "$applied"
+  echo "Caddy reloaded with the new Caddyfile"
+fi
+
 docker image prune -f > /dev/null
 
 echo "deployed $TAG"
