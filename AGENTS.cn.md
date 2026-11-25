@@ -364,6 +364,8 @@ Phase 2 的 `msa-backend` / `msa-frontend` 和它的 `neondb` 库**保持不动*
 | 2026-11-22 | 本地 AI 研究项目 `E:\CodeLearning\LocalAI`（Ollama + Qwen3 8B，模型在 `D:\LocalAI\models`）：HealthTrack 式工具调用测试全过，关思考 4.5 秒/题。本项目**没改代码**；本地后端设 `DeepSeek__BaseUrl=http://localhost:11434/v1` 等即可切过去（见 LocalAI 的 `docs/healthtrack.md`），要关思考需新增可选配置 `DeepSeek:ReasoningEffort`。存档：用户说先不做集成 |
 | 2026-11-21 | 统计/首页改版三步计划的第 1 步：Plan 页 + 目标按周存储（D-24，迁移 `WeeklyIntakeGoal`，共 141 个测试）。第 2 步首页改版、第 3 步统计页（Intake/Burned 切换，自然周/月/年可往回翻，日均只算有记录的天，排行榜） |
 | 2026-11-25 | 自托管部署文件 `deploy/vps/`（D-39）；README 按现在的项目重写（Phase 2 提交时的 README 存为 `specs/07-phase2-submission-readme.md`）；英文版 AGENTS.en.md |
+| 2026-11-26 | 应用搬到 `healthtrack.kevinzheng.dev`（D-41）：PR #21（`deploy.sh` 在 Caddyfile 变化时先验证再重建 Caddy）、#22（子域名）先后合并，两次自动部署都一次成功；验证了 `/api/health` 版本 `38e4013`、主域名和 www 302 跳转且保留路径、http→https、前端 bundle 里的 API 地址 |
+| 2026-11-26 | **存档**：子域名切换完成。讨论了作品集的构想（见第 9 节），下一步用户先处理别的事，作品集之后再做 |
 | 2026-11-26 | **存档**（2026-11-25～26 这一轮）：①写了 VPS 部署文件（Compose + Caddy + Postgres + 备份，D-39）；②租了 DigitalOcean 悉尼 2GB、在 Cloudflare 买了 `kevinzheng.dev`、配 A 记录（灰色云朵），手动部署上线并验证注册 / AI / 拍照识别；③每天 cron 备份；④README 按当前项目重写，Phase 2 的 README 存进 `specs/`；⑤AGENTS 出了英文版并成为主文件（中文改名 `AGENTS.cn.md`）；⑥VPS 接入 CI/CD（D-40，forced command 部署密钥、`/api/health` 带版本号），PR #17 / #18 / #19 合并，自动部署跑通。下一步见第 9 节新加的几条（备份异地存放、域名邮件防伪造、合并后的分支清理等） |
 | 2026-11-26 | PR #19 合并（`bbe3b8f`），VPS 自动部署跑通：第一次因为 GitHub Secrets 没加好在 "Set up SSH" 失败，换了一把部署密钥、补好 Secrets 后 Re-run failed jobs，build / azure / vps 全部成功，`/api/health` 返回 `version: bbe3b8f`，两套部署的网页标题都变成 HealthTrack |
 | 2026-11-26 | 英文版改名为 `AGENTS.md`（主文件，agent 工具会自动读取），中文版改名为 `AGENTS.cn.md` |
@@ -443,6 +445,7 @@ Phase 2 的 `msa-backend` / `msa-frontend` 和它的 `neondb` 库**保持不动*
   5. Food Log 搜索框下："Calories are estimates from the photo and the scale's weight; tap ✎ to correct."
   —— 我的建议是 1 + 3 必做，2、4、5 可选；用户还没定做哪几项
 - [ ] **VPS 收尾**（2026-11-26）：①备份只在服务器上，偶尔用 `scp` 拷回本地，或者推到对象存储；②`kevinzheng.dev` 不发邮件，加 SPF（`v=spf1 -all`）和 DMARC（`p=reject`）两条 TXT 记录，防止别人冒充这个域名发信（Cloudflare 的建议）；③删掉已合并的分支（`chore/vps-live`、`feature/vps-cd`、`feature/vps-deploy`、`chore/notes-2`）；④后端加 `UseForwardedHeaders`，让配对限流在 Caddy / Azure 代理后面拿到真实 IP（D-39 已知问题）；⑤可选：镜像从 Docker Hub 换到 GHCR，少存一组凭据；⑥可选：Stack-chan 改连 VPS 需要在 `root_ca.h` 加 ISRG Root X1
+- [ ] **作品集网站 `kevinzheng.dev`**（2026-11-26 讨论，未开始）：首页列出所有项目卡片（名称、一句话、技术栈、截图），有在线版本的放“打开”按钮跳到各自子域名（如 `healthtrack.kevinzheng.dev`），卡片上用浏览器请求该项目的 `/api/health` 显示 ● Live 和版本号；没有在线版本的（HealthMate、Audiobookshelf）只放 GitHub 链接。初步打算：单独一个仓库、纯静态、放 Cloudflare Pages（推送自动部署，免费，和 VPS 解耦；关掉 VPS 作品集也还在），做好后把 `@` / `www` 的 DNS 指过去并删掉 Caddyfile 里的临时跳转。如果以后需要后端，也可以放回 VPS（Caddyfile 加一段 `file_server` 或 `reverse_proxy`）。新的在线项目：DNS 加一条 A 记录 + Caddyfile 一段 + compose 里的容器，共用这台 VPS 和 Postgres（每个项目一个库）
 - [ ] **营养素和建议摄入量**（2026-11-23 用户提出，想法阶段，未定）：除了热量，再记录蛋白质 / 碳水 / 脂肪（以后可以加纤维、糖、钠），并给出每天的建议量。我的初步想法：
   1. **识别**：模型多返回每 100g 的蛋白质、碳水、脂肪（和 kcal/100g 一样只给语义），克数仍由代码乘实测重量（D-03 的原则）；手动记一餐、修改弹窗也加这三栏。`IntakeRecords` 加可空列，旧记录为空、统计时显示"部分记录没有营养数据"
   2. **建议量**：用 Plan 页的身体数据算，不靠模型——蛋白质按体重（例如 1.2–1.6 g/kg，减重时偏高），脂肪约占热量 20–35%，碳水补足剩下的热量；放在 Plan 页（和摄入目标同一张卡片，或者新开一张），首页摄入卡片下面加三条小进度条
