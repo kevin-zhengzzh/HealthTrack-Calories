@@ -1,0 +1,66 @@
+# Self-hosted deployment on a single Linux VPS, separate from the Azure one.
+# Caddy terminates HTTPS (automatic Let's Encrypt certificates) and serves the
+# site and the API from one domain: /api/* -> backend, everything else -> frontend.
+# Only Caddy publishes ports; Postgres and the backend are reachable only inside
+# the Docker network.
+#
+#   cp .env.example .env   # then fill it in
+#   docker compose up -d --build
+
+services:
+  caddy:
+    image: caddy:2-alpine
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    environment:
+      DOMAIN: ${DOMAIN:?set DOMAIN in .env}
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data      # certificates; keep it so we don't hit Let's Encrypt rate limits
+      - caddy-config:/config
+    depends_on:
+      - backend
+      - frontend
+
+  db:
+    image: postgres:17-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: healthtrack
+      POSTGRES_USER: healthtrack
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
+    volumes:
+      - db-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U healthtrack -d healthtrack"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  backend:
+    build: ../../software/backend
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      ConnectionStrings__DefaultConnection: Host=db;Port=5432;Database=healthtrack;Username=healthtrack;Password=${POSTGRES_PASSWORD}
+      Jwt__Key: ${JWT_KEY:?set JWT_KEY in .env}
+      DeepSeek__ApiKey: ${DEEPSEEK_API_KEY:-}
+      Anthropic__ApiKey: ${ANTHROPIC_API_KEY:-}
+      ASPNETCORE_ENVIRONMENT: Production
+
+  frontend:
+    build:
+      context: ../../software/frontend
+      args:
+        # Same origin as the site, so the browser calls https://DOMAIN/api/...
+        VITE_API_URL: https://${DOMAIN}
+    restart: unless-stopped
+
+volumes:
+  caddy-data:
+  caddy-config:
+  db-data:

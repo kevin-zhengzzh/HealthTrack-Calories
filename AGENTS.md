@@ -25,6 +25,7 @@ firmware/stackchan-scale/   PlatformIO 固件（Arduino on ESP32-S3）
   src/head.cpp       舵机（SCS0009）+ PY32 IO 扩展芯片供电
   lib/FTServo/       飞特舵机库（MIT，来自 m5stack/StackChan，有 IDF 4.4 兼容补丁）
   include/secrets.h  Wi-Fi、后端地址、设备密钥（git 忽略；模板 secrets.example.h）
+deploy/vps/          自托管部署（Docker Compose + Caddy + Postgres，D-39）
 .github/workflows/   ci.yml（每次 push/PR 到 main），deploy.yml（main 上 CI 通过后自动部署，也可手动触发）
 specs/               Phase 2 的规划、提示词日志、设计决策
 ```
@@ -286,6 +287,13 @@ Phase 2 的 `msa-backend` / `msa-frontend` 和它的 `neondb` 库**保持不动*
 - **HTTPS**：`beginHttp` 不再 `setInsecure()`，改为 `setCACert(ROOT_CA)`（`include/root_ca.h`：DigiCert Global Root G2——当前链 Microsoft TLS G2 RSA CA OCSP 16 → Microsoft TLS RSA Root G2（交叉签名）→ 它；另带 Microsoft RSA Root CA 2017、DigiCert Global Root CA 以防 Azure 换证书；来自 certifi，`openssl s_client -CAfile` 验证通过）。证书校验要正确时间：未对时最多等 5 秒，仍未对时不发 HTTPS（上传进暂存）。**换后端域名或 Azure 换 CA 时要更新 root_ca.h**，否则设备连不上（症状：串口 "HTTPS" / 所有请求 -1）。
 - **真机验证（2026-11-22，PR #16 部署后）**：联网后账号检查 200（证书校验通过）；关热点称了两次 → 都存进闪存、中途重启没丢 → 开热点后按顺序补传，两次都 200；Device 页显示 "Firmware 0.6.0 · Wi-Fi strong (−31 dBm) · Scale connected"。补传那次后端还是旧版，所以记录时间是补传时间；之后补传的会用拍摄时间（未再验证）。
 - **已知问题（未修，用户说先不改）**：补传的照片如果被判定为"不是食物"，服务器返回 200 + isFood=false、什么都不记，设备也不提示——那条就悄悄没了（测试时两条只记上一条，最可能就是这个原因；补传任务只打印状态码、没打印回复，无法确认）。可选的修法：①补传时打印回复 + 主画面提示 "1 saved photo wasn't recognised as food"；②补传的非食物照片存成 Unnamed food 让用户自己处理（会放宽 D-05）。
+
+### D-39 在一台 VPS 上自托管第二套部署，与 Azure 互不影响（2026-11-25）
+- **决定**：`deploy/vps/`：DigitalOcean 悉尼 2GB Ubuntu + 自己的 .com 域名（Cloudflare 注册，DNS only）；Docker Compose 跑 Caddy + 后端 + 前端 + Postgres。Caddy 自动申请 Let's Encrypt 证书，同一个域名下 `/api/*` 转给后端、其余转给前端（同源，不涉及 CORS）；只开 22/80/443，数据库不对外。空库开始，`backup.sh` 每天 pg_dump，保留 14 份。在服务器上 `git pull && docker compose up -d --build` 更新（暂不做自动部署）。
+- **原因**：用户投 web hosting 公司的岗位，JD 要求 Linux、hosting、域名/DNS；自己从零搭一遍才有真实经历可讲。Azure 那套（D-13）保持不动。
+- **共用**：代码、DeepSeek/Anthropic Key（每日上限仍然有效）。账号和数据不互通。
+- **设备**：Stack-chan 仍连 Azure。改连 VPS 需要把 ISRG Root X1 加进 `root_ca.h`（D-38）。
+- **已知**：配对的按 IP 限流在代理后面看到的是 Caddy 的地址（Azure 上同样如此），等于所有人共用一个额度；用的人少，暂不处理（要处理就加 `UseForwardedHeaders`）。
 
 ### D-14 部署工作流暂时只能手动触发（2026-11-18；2026-11-19 已恢复自动部署）
 - **决定**：`deploy.yml` 只保留 `workflow_dispatch`。
