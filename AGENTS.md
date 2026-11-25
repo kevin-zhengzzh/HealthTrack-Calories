@@ -2,7 +2,7 @@
 
 给在这个仓库里工作的 AI agent（以及回头翻看的自己）的项目手册：结构、命令、约定、**关键决策**和**开发节点**。
 
-**维护规则**：每做出一个关键决策、完成一个节点、踩到一个值得记的坑，就更新对应章节。决策只追加不删除；被推翻的决策标注"已被 D-xx 取代"。
+**维护规则**：每做出一个关键决策、完成一个节点、踩到一个值得记的坑，就更新对应章节。决策只追加不删除；被推翻的决策标注"已被 D-xx 取代"。英文版 [`AGENTS.en.md`](./AGENTS.en.md) 要同步更新（两者不一致时以本文件为准）。
 
 ---
 
@@ -25,6 +25,7 @@ firmware/stackchan-scale/   PlatformIO 固件（Arduino on ESP32-S3）
   src/head.cpp       舵机（SCS0009）+ PY32 IO 扩展芯片供电
   lib/FTServo/       飞特舵机库（MIT，来自 m5stack/StackChan，有 IDF 4.4 兼容补丁）
   include/secrets.h  Wi-Fi、后端地址、设备密钥（git 忽略；模板 secrets.example.h）
+deploy/vps/          自托管部署（Docker Compose + Caddy + Postgres，D-39）
 .github/workflows/   ci.yml（每次 push/PR 到 main），deploy.yml（main 上 CI 通过后自动部署，也可手动触发）
 specs/               Phase 2 的规划、提示词日志、设计决策
 ```
@@ -284,7 +285,15 @@ Phase 2 的 `msa-backend` / `msa-frontend` 和它的 `neondb` 库**保持不动*
 - **离线暂存补传**：上传因为没网、服务器 5xx / 超时（冷启动）、每日上限 429、或者还没对时无法 HTTPS 而失败时，把照片 + 重量 + 拍摄时间 + 本地日期存进闪存（LittleFS，`default_16MB.csv` 的 spiffs 分区，`/q/<拍摄时间>-<序号>.jpg/.txt`），最多 10 条；屏幕显示 "Saved for later"、LED 琥珀色。空闲且在线时后台任务（不画屏，一次一个 TLS 连接）按时间顺序补传，失败退避 1 → 30 分钟；4xx 拒绝的直接丢弃；401 回到配对并清空暂存（属于原账号）。**没网时不再等**：重量稳定就拍照存起来（原来是一直等 Wi-Fi）。主画面 Ready 一行显示 "2 meals waiting to upload / saved offline"。
 - **后端**：`POST /api/intake/device` 新增可选 `takenAt`（Unix 秒）：两周内、不超过未来 5 分钟时，记录的 CreatedAt 用它，日期用设备给的本地日期（与拍摄时间的 UTC 日期相差 ≤1 天才接受，否则用 UTC 日期）——补传的旧餐不会被 `ResolveToday` 夹到今天。**去重**：同一设备、同一 `takenAt` 已有记录时直接返回那条（不重复记录、不再花钱识别）——第一次上传超时但服务器其实已存的情况。所有上传都带 `takenAt`，所以第一次和重试能对上。
 - **HTTPS**：`beginHttp` 不再 `setInsecure()`，改为 `setCACert(ROOT_CA)`（`include/root_ca.h`：DigiCert Global Root G2——当前链 Microsoft TLS G2 RSA CA OCSP 16 → Microsoft TLS RSA Root G2（交叉签名）→ 它；另带 Microsoft RSA Root CA 2017、DigiCert Global Root CA 以防 Azure 换证书；来自 certifi，`openssl s_client -CAfile` 验证通过）。证书校验要正确时间：未对时最多等 5 秒，仍未对时不发 HTTPS（上传进暂存）。**换后端域名或 Azure 换 CA 时要更新 root_ca.h**，否则设备连不上（症状：串口 "HTTPS" / 所有请求 -1）。
-- **待真机验证**（烧录时设备处没有可用 Wi-Fi）：联网后账号检查 200（证书校验通过）；断网称重 → Saved for later → 联网后约 1 分钟补传、Food Log 里是原来的时间；Device 页状态（需后端部署后）。
+- **真机验证（2026-11-22，PR #16 部署后）**：联网后账号检查 200（证书校验通过）；关热点称了两次 → 都存进闪存、中途重启没丢 → 开热点后按顺序补传，两次都 200；Device 页显示 "Firmware 0.6.0 · Wi-Fi strong (−31 dBm) · Scale connected"。补传那次后端还是旧版，所以记录时间是补传时间；之后补传的会用拍摄时间（未再验证）。
+- **已知问题（未修，用户说先不改）**：补传的照片如果被判定为"不是食物"，服务器返回 200 + isFood=false、什么都不记，设备也不提示——那条就悄悄没了（测试时两条只记上一条，最可能就是这个原因；补传任务只打印状态码、没打印回复，无法确认）。可选的修法：①补传时打印回复 + 主画面提示 "1 saved photo wasn't recognised as food"；②补传的非食物照片存成 Unnamed food 让用户自己处理（会放宽 D-05）。
+
+### D-39 在一台 VPS 上自托管第二套部署，与 Azure 互不影响（2026-11-25）
+- **决定**：`deploy/vps/`：DigitalOcean 悉尼 2GB Ubuntu + 自己的 .com 域名（Cloudflare 注册，DNS only）；Docker Compose 跑 Caddy + 后端 + 前端 + Postgres。Caddy 自动申请 Let's Encrypt 证书，同一个域名下 `/api/*` 转给后端、其余转给前端（同源，不涉及 CORS）；只开 22/80/443，数据库不对外。空库开始，`backup.sh` 每天 pg_dump，保留 14 份。在服务器上 `git pull && docker compose up -d --build` 更新（暂不做自动部署）。
+- **原因**：用户投 web hosting 公司的岗位，JD 要求 Linux、hosting、域名/DNS；自己从零搭一遍才有真实经历可讲。Azure 那套（D-13）保持不动。
+- **共用**：代码、DeepSeek/Anthropic Key（每日上限仍然有效）。账号和数据不互通。
+- **设备**：Stack-chan 仍连 Azure。改连 VPS 需要把 ISRG Root X1 加进 `root_ca.h`（D-38）。
+- **已知**：配对的按 IP 限流在代理后面看到的是 Caddy 的地址（Azure 上同样如此），等于所有人共用一个额度；用的人少，暂不处理（要处理就加 `UseForwardedHeaders`）。
 
 ### D-14 部署工作流暂时只能手动触发（2026-11-18；2026-11-19 已恢复自动部署）
 - **决定**：`deploy.yml` 只保留 `workflow_dispatch`。
@@ -333,7 +342,10 @@ Phase 2 的 `msa-backend` / `msa-frontend` 和它的 `neondb` 库**保持不动*
 | 2026-11-22 | 网页拍照记一餐（D-37，迁移 `AddIntakeSource`）；后端 171 / 前端 57 个测试；本地用真实 Claude 端到端验证 |
 | 2026-11-22 | 修复手机上 Plan 页被整体缩小（`InfoTip` 隐藏的气泡撑宽页面）；所有页面在 375px 下宽度检查通过 |
 | 2026-11-22 | 固件 0.6.0（D-38）：设备状态头、离线暂存补传、HTTPS 证书校验；后端 `takenAt` + 去重 + 迁移 `AddDeviceStatus`（177 个测试）；Device 页状态；已烧录（开机正常，设备处没 Wi-Fi，联网部分待验证） |
+| 2026-11-22 | PR #16 合并部署（`d744aec`）：固件 0.6.0 的后端支持、设备状态、Plan 页手机修复；真机验证 HTTPS 证书校验、离线暂存补传、Device 页状态。存档：下一步用户想研究本地部署 AI（单独的新项目，给本项目调用） |
+| 2026-11-22 | 本地 AI 研究项目 `E:\CodeLearning\LocalAI`（Ollama + Qwen3 8B，模型在 `D:\LocalAI\models`）：HealthTrack 式工具调用测试全过，关思考 4.5 秒/题。本项目**没改代码**；本地后端设 `DeepSeek__BaseUrl=http://localhost:11434/v1` 等即可切过去（见 LocalAI 的 `docs/healthtrack.md`），要关思考需新增可选配置 `DeepSeek:ReasoningEffort`。存档：用户说先不做集成 |
 | 2026-11-21 | 统计/首页改版三步计划的第 1 步：Plan 页 + 目标按周存储（D-24，迁移 `WeeklyIntakeGoal`，共 141 个测试）。第 2 步首页改版、第 3 步统计页（Intake/Burned 切换，自然周/月/年可往回翻，日均只算有记录的天，排行榜） |
+| 2026-11-25 | 自托管部署文件 `deploy/vps/`（D-39）；README 按现在的项目重写（Phase 2 提交时的 README 存为 `specs/07-phase2-submission-readme.md`）；英文版 AGENTS.en.md |
 
 ---
 
@@ -393,8 +405,8 @@ Phase 2 的 `msa-backend` / `msa-frontend` 和它的 `neondb` 库**保持不动*
 - [x] 串口日志被 `cam_hal: EV-EOF-OVF` 刷屏 —— 固件里关不掉（见"踩过的坑"），改用 `tools/serial_log.py` 过滤
 - [ ] 秤的玩法：饭后称剩菜（按差值记实际吃掉的量）；一盘逐个加食物（按重量差分别识别）
 - [ ] 设备上的摄入圆环只在上传/账号检查时更新，网页改动要碰一下设备才显示（D-21，目前可接受）
-- [ ] README 补充智能秤功能说明
-- [ ] 识别失败（或误判为非食物）的照片是否要保留供人工确认
+- [x] README 补充智能秤功能说明（2026-11-25，README 已重写）
+- [ ] 识别失败（或误判为非食物）的照片是否要保留供人工确认——补传时尤其明显，见 D-38 的"已知问题"
 - [x] **Statistics 页下面两块挪走**（2026-11-22 已完成，见 D-35）（2026-11-22 用户提出）："Last week" AI 周总结和签到热力图不跟随页面的周/月/年和 Intake/Burned 切换，放在统计页里显得不搭。我的初步想法（未定）：签到热力图 → History → Check-ins 标签顶部（本来就是签到记录，热力图自带月/年切换）；AI 周总结 → 首页底部，或者做成 AI 助手里"上周回顾"的内容，或单独放进侧边栏。做之前和用户确认放哪里。
 - [x] **右下角 + 按钮改交互**（2026-11-22 已完成，见 D-35）（2026-11-22 用户提出）：鼠标**悬停**就**向左**横向弹出 Add meal / Record workout 两个按钮（现在是点击后向上弹出，会盖住上面的"回到顶部"按钮）。手机上没有悬停，仍然点击展开。
 - [x] **Add meal 弹窗加设备入口和说明**（2026-11-22 已完成，见 D-35）（2026-11-22 用户提出）：例如 "Have a Stack-chan scale? Weigh food on it and it's logged with a photo automatically — pair it on the Device page →"，说明手动添加和秤自动记录的区别（手动没有照片，热量 = 克数 × kcal/100g）。
@@ -405,3 +417,9 @@ Phase 2 的 `msa-backend` / `msa-frontend` 和它的 `neondb` 库**保持不动*
   4. Plan 页顶部一句提醒
   5. Food Log 搜索框下："Calories are estimates from the photo and the scale's weight; tap ✎ to correct."
   —— 我的建议是 1 + 3 必做，2、4、5 可选；用户还没定做哪几项
+- [ ] **营养素和建议摄入量**（2026-11-23 用户提出，想法阶段，未定）：除了热量，再记录蛋白质 / 碳水 / 脂肪（以后可以加纤维、糖、钠），并给出每天的建议量。我的初步想法：
+  1. **识别**：模型多返回每 100g 的蛋白质、碳水、脂肪（和 kcal/100g 一样只给语义），克数仍由代码乘实测重量（D-03 的原则）；手动记一餐、修改弹窗也加这三栏。`IntakeRecords` 加可空列，旧记录为空、统计时显示"部分记录没有营养数据"
+  2. **建议量**：用 Plan 页的身体数据算，不靠模型——蛋白质按体重（例如 1.2–1.6 g/kg，减重时偏高），脂肪约占热量 20–35%，碳水补足剩下的热量；放在 Plan 页（和摄入目标同一张卡片，或者新开一张），首页摄入卡片下面加三条小进度条
+  3. **展示**：Food Log 每条记录的灰色明细加 P/C/F；Statistics 的 Intake 加营养素比例；AI 助手的 `get_intake_summary` 和周总结带上营养素
+  4. **以后：食谱推荐**：根据今天还差多少热量和蛋白质，让 AI 推荐下一餐（例如"还差 40g 蛋白质、600 kcal"）；数字由代码算好再交给模型，模型只负责推荐菜。可以先做成 AI 助手里的一个预设，不写库
+  —— 问题：照片估营养素比估热量误差更大（尤其混合菜），需要标成估算；做之前先用真实照片测一下 Haiku 给的营养素靠不靠谱
