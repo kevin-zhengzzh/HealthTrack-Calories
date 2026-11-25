@@ -50,7 +50,7 @@ The first two are on Azure Container Apps, which scales to zero when idle, so th
 
 ## Design choices
 
-Full decision log, with reasons and trade-offs: [`AGENTS.md`](./AGENTS.md) (Chinese) / [`AGENTS.en.md`](./AGENTS.en.md) (English).
+Full decision log, with reasons and trade-offs: [`AGENTS.md`](./AGENTS.md) ([中文](./AGENTS.cn.md)).
 
 - **The device never talks to Claude directly.** It only uploads to the backend, so no AI key is stored on the device, and prompts or models can change without re-flashing.
 - **Each device has its own key.** It's created when the device is paired, shown once, stored only as a hash, and can be revoked from the web app.
