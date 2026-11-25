@@ -4,8 +4,11 @@
 # Only Caddy publishes ports; Postgres and the backend are reachable only inside
 # the Docker network.
 #
-#   cp .env.example .env   # then fill it in
-#   docker compose up -d --build
+# Normally deployed by GitHub Actions (.github/workflows/deploy.yml), which
+# builds the images and runs deploy.sh <tag> over SSH; the images are pulled
+# from Docker Hub. TAG (in .env) selects which commit's images run.
+# To build from source on the server instead:
+#   TAG=local docker compose up -d --build
 
 services:
   caddy:
@@ -40,6 +43,7 @@ services:
       retries: 10
 
   backend:
+    image: ${IMAGE_REPO:-kevinzheng123/healthtrack-calories}:backend-${TAG:-local}
     build: ../../software/backend
     restart: unless-stopped
     depends_on:
@@ -51,8 +55,11 @@ services:
       DeepSeek__ApiKey: ${DEEPSEEK_API_KEY:-}
       Anthropic__ApiKey: ${ANTHROPIC_API_KEY:-}
       ASPNETCORE_ENVIRONMENT: Production
+      # Reported by /api/health so the deploy job can confirm the new version.
+      APP_VERSION: ${TAG:-local}
 
   frontend:
+    image: ${IMAGE_REPO:-kevinzheng123/healthtrack-calories}:vps-frontend-${TAG:-local}
     build:
       context: ../../software/frontend
       args:

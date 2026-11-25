@@ -296,6 +296,14 @@ Phase 2 的 `msa-backend` / `msa-frontend` 和它的 `neondb` 库**保持不动*
 - **设备**：Stack-chan 仍连 Azure。改连 VPS 需要把 ISRG Root X1 加进 `root_ca.h`（D-38）。
 - **已知**：配对的按 IP 限流在代理后面看到的是 Caddy 的地址（Azure 上同样如此），等于所有人共用一个额度；用的人少，暂不处理（要处理就加 `UseForwardedHeaders`）。
 
+### D-40 VPS 也接入 CI/CD：Actions 构建镜像，经 SSH 让服务器拉取（2026-11-26，取代 D-39 的手动更新方式）
+- **决定**：`deploy.yml` 拆成三个任务：`build`（一次构建 backend、Azure 前端、VPS 前端三个镜像，标签都是 commit 短 SHA）→ `azure` 和 `vps` **并行**（一边失败不影响另一边；`concurrency` 保证不会同时跑两次部署）。`vps` 用 SSH 执行服务器上的 `deploy/vps/deploy.sh <sha>`：`git pull` 拿最新的 compose/Caddyfile → 把 `TAG` 写进 `.env` → `docker compose pull` + `up -d` → 清理旧镜像；然后轮询 `https://kevinzheng.dev/api/health`，直到它报告的 `version` 等于这次的 SHA。
+- **原因**：和 Azure 统一（构建一次、到处部署，镜像可追溯到 commit、可回滚）；服务器不再编译（省内存、更新更快）。VPS 前端要单独构建，因为 API 地址在构建时写进 bundle；后端镜像两边共用（配置走环境变量）。
+- **安全**：GitHub 用一把专用密钥，在 `authorized_keys` 里用 **forced command** 限定只能运行 `deploy.sh`（并禁止端口转发和 pty），客户端请求的命令只当作 tag 传进 `SSH_ORIGINAL_COMMAND`，脚本只接受 7–40 位小写十六进制。密钥泄露最多只能把网站部署成某个已有版本。`VPS_KNOWN_HOSTS` 固定服务器主机公钥（防中间人）。GitHub Secrets：`VPS_HOST`、`VPS_SSH_KEY`、`VPS_KNOWN_HOSTS`。
+- **新接口** `GET /api/health`：检查数据库能否连接，返回 `{status, version}`，`version` 来自环境变量 `APP_VERSION`（compose 里设为 `TAG`；Azure 上没设，为 null）。
+- **手动**：服务器上 `./deploy.sh <sha>` 回滚到任何部署过的版本；`TAG=local docker compose up -d --build` 从源码构建（测试分支时用）。
+- **坑**：`deploy.sh` 包在 `{ … }` 里，让 shell 先读完整个脚本再执行，因为脚本里的 `git pull` 可能替换它自己。
+
 ### D-14 部署工作流暂时只能手动触发（2026-11-18；2026-11-19 已恢复自动部署）
 - **决定**：`deploy.yml` 只保留 `workflow_dispatch`。
 - **原因**：最初镜像名和应用名都指向 Phase 2，自动部署会覆盖线上服务。现在已改为 `healthtrack-*`，并且首次部署已成功。
@@ -347,6 +355,7 @@ Phase 2 的 `msa-backend` / `msa-frontend` 和它的 `neondb` 库**保持不动*
 | 2026-11-22 | 本地 AI 研究项目 `E:\CodeLearning\LocalAI`（Ollama + Qwen3 8B，模型在 `D:\LocalAI\models`）：HealthTrack 式工具调用测试全过，关思考 4.5 秒/题。本项目**没改代码**；本地后端设 `DeepSeek__BaseUrl=http://localhost:11434/v1` 等即可切过去（见 LocalAI 的 `docs/healthtrack.md`），要关思考需新增可选配置 `DeepSeek:ReasoningEffort`。存档：用户说先不做集成 |
 | 2026-11-21 | 统计/首页改版三步计划的第 1 步：Plan 页 + 目标按周存储（D-24，迁移 `WeeklyIntakeGoal`，共 141 个测试）。第 2 步首页改版、第 3 步统计页（Intake/Burned 切换，自然周/月/年可往回翻，日均只算有记录的天，排行榜） |
 | 2026-11-25 | 自托管部署文件 `deploy/vps/`（D-39）；README 按现在的项目重写（Phase 2 提交时的 README 存为 `specs/07-phase2-submission-readme.md`）；英文版 AGENTS.en.md |
+| 2026-11-26 | VPS 接入 CI/CD（D-40）：`deploy.yml` 拆成 build → azure / vps 并行，forced command 限定部署密钥，`/api/health` 带版本号；本地验证了 compose 配置、tag 校验（拒绝 `abc1234;rm` 等）和 health 返回值，177 个测试通过 |
 | 2026-11-26 | PR #17 合并；VPS 上线：DigitalOcean 悉尼 2GB（`209.38.84.117`）+ Cloudflare 注册的 `kevinzheng.dev`（灰色云朵），Caddy 自动拿到证书，www 和 http 都跳转到 https://kevinzheng.dev。注册、签到、AI 助手（DeepSeek）、手机拍照识别（Claude，香蕉 89 kcal/100g）都在线上验证过；每天 3:00 UTC cron 备份。网页标题 "frontend" 改为 "HealthTrack" |
 
 ---

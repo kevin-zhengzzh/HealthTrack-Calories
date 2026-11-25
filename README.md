@@ -114,8 +114,8 @@ npm test && npx oxlint src      # software/frontend/
 
 ## Deployment
 
-- **Azure** ([`.github/workflows/deploy.yml`](./.github/workflows/deploy.yml)): after CI passes on `main`, both images are built, pushed to Docker Hub with the commit SHA as the tag, and rolled out to Azure Container Apps. EF Core migrations run when the backend starts.
-- **Self-hosted** ([`deploy/vps/`](./deploy/vps/)): Docker Compose on one Linux server, with Caddy for automatic HTTPS, the site and API on one domain, and a local Postgres with daily backups.
+- **Azure** ([`.github/workflows/deploy.yml`](./.github/workflows/deploy.yml)): after CI passes on `main`, the images are built once, pushed to Docker Hub with the commit SHA as the tag, and rolled out to Azure Container Apps. EF Core migrations run when the backend starts.
+- **Self-hosted** ([`deploy/vps/`](./deploy/vps/)): Docker Compose on one Linux server, with Caddy for automatic HTTPS, the site and API on one domain, and a local Postgres with daily backups. The same workflow deploys it in parallel: it SSHes in with a key that can only run the deploy script, the server pulls the new images, and the job waits until `/api/health` reports the new version.
 
 ## Disclaimer
 

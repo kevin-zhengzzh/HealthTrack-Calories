@@ -97,4 +97,15 @@ app.MapOpenApi();
 app.MapScalarApiReference();
 app.MapControllers();
 
+// Health check for deploy jobs: the app is up and can reach the database.
+// APP_VERSION is the image tag (commit SHA) when set by the deployment, so a
+// deploy job can confirm the new version is the one answering.
+app.MapGet("/api/health", async (AppDbContext db, IConfiguration config) =>
+{
+    var version = config["APP_VERSION"];
+    return await db.Database.CanConnectAsync()
+        ? Results.Ok(new { status = "ok", version })
+        : Results.Json(new { status = "database unavailable", version }, statusCode: StatusCodes.Status503ServiceUnavailable);
+});
+
 app.Run();

@@ -1,8 +1,11 @@
 name: Deploy
 
-# Deploys to its own Container Apps, separate from the Phase 2 deployment
-# (msa-backend / msa-frontend), which stays untouched. Runs after CI passes
-# on main (i.e. after a PR is merged), or manually from the Actions tab.
+# Runs after CI passes on main (i.e. after a PR is merged), or manually from
+# the Actions tab. Builds the images once, then rolls them out to two
+# independent deployments in parallel:
+#   - Azure Container Apps (healthtrack-backend / healthtrack-frontend), separate
+#     from the Phase 2 apps (msa-backend / msa-frontend), which stay untouched
+#   - the self-hosted VPS (deploy/vps/), over SSH
 on:
   workflow_run:
     workflows: [CI]
@@ -10,29 +13,39 @@ on:
     branches: [main]
   workflow_dispatch:
 
+# Never run two rollouts at once; a newer one waits for the current one.
+concurrency:
+  group: deploy
+  cancel-in-progress: false
+
 env:
-  # Single Docker Hub repo; backend/frontend are distinguished by tag prefix.
+  # Single Docker Hub repo; images are distinguished by tag prefix.
   IMAGE_REPO: kevinzheng123/healthtrack-calories
   # Created once by hand in the Phase 2 resource group's Container Apps
   # environment; this workflow only rolls out new images to them.
   BACKEND_APP: healthtrack-backend
   FRONTEND_APP: healthtrack-frontend
   AZURE_RESOURCE_GROUP: msa-phase2
-  # Baked into the frontend bundle at build time. Same environment as
-  # Phase 2, so the same default domain.
-  VITE_API_URL: https://healthtrack-backend.icyglacier-3b078f70.australiaeast.azurecontainerapps.io
+  # API origins baked into each frontend bundle at build time.
+  AZURE_API_URL: https://healthtrack-backend.icyglacier-3b078f70.australiaeast.azurecontainerapps.io
+  VPS_URL: https://kevinzheng.dev
 
 jobs:
-  deploy:
+  build:
     if: github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success'
     runs-on: ubuntu-latest
+    outputs:
+      tag: ${{ steps.tag.outputs.tag }}
     steps:
       - uses: actions/checkout@v4
         with:
           ref: ${{ github.event.workflow_run.head_sha || github.sha }}
 
+      # The short commit SHA tags every image, so each running version traces
+      # back to a commit and can be rolled back to.
       - name: Compute image tag
-        run: echo "TAG=$(git rev-parse --short HEAD)" >> "$GITHUB_ENV"
+        id: tag
+        run: echo "tag=$(git rev-parse --short HEAD)" >> "$GITHUB_OUTPUT"
 
       - uses: docker/login-action@v3
         with:
@@ -41,25 +54,45 @@ jobs:
 
       - uses: docker/setup-buildx-action@v3
 
+      # One backend image serves both deployments; configuration comes from
+      # environment variables at runtime.
       - name: Build & push backend
         uses: docker/build-push-action@v6
         with:
           context: software/backend
           push: true
           tags: |
-            ${{ env.IMAGE_REPO }}:backend-${{ env.TAG }}
+            ${{ env.IMAGE_REPO }}:backend-${{ steps.tag.outputs.tag }}
             ${{ env.IMAGE_REPO }}:backend
 
-      - name: Build & push frontend
+      # The frontend needs one image per deployment, because the API origin
+      # is compiled into the bundle.
+      - name: Build & push frontend (Azure)
         uses: docker/build-push-action@v6
         with:
           context: software/frontend
           push: true
-          build-args: VITE_API_URL=${{ env.VITE_API_URL }}
+          build-args: VITE_API_URL=${{ env.AZURE_API_URL }}
           tags: |
-            ${{ env.IMAGE_REPO }}:frontend-${{ env.TAG }}
+            ${{ env.IMAGE_REPO }}:frontend-${{ steps.tag.outputs.tag }}
             ${{ env.IMAGE_REPO }}:frontend
 
+      - name: Build & push frontend (VPS)
+        uses: docker/build-push-action@v6
+        with:
+          context: software/frontend
+          push: true
+          build-args: VITE_API_URL=${{ env.VPS_URL }}
+          tags: |
+            ${{ env.IMAGE_REPO }}:vps-frontend-${{ steps.tag.outputs.tag }}
+            ${{ env.IMAGE_REPO }}:vps-frontend
+
+  azure:
+    needs: build
+    runs-on: ubuntu-latest
+    env:
+      TAG: ${{ needs.build.outputs.tag }}
+    steps:
       - uses: azure/login@v2
         with:
           creds: ${{ secrets.AZURE_CREDENTIALS }}
@@ -78,3 +111,47 @@ jobs:
           --name "$FRONTEND_APP"
           --resource-group "$AZURE_RESOURCE_GROUP"
           --image "$IMAGE_REPO:frontend-$TAG"
+
+  vps:
+    needs: build
+    runs-on: ubuntu-latest
+    env:
+      TAG: ${{ needs.build.outputs.tag }}
+    steps:
+      # The key in VPS_SSH_KEY can only run deploy/vps/deploy.sh on the server
+      # (a forced command in authorized_keys); the SSH "command" we send is
+      # just the tag. VPS_KNOWN_HOSTS pins the server's host key.
+      - name: Set up SSH
+        env:
+          VPS_SSH_KEY: ${{ secrets.VPS_SSH_KEY }}
+          VPS_KNOWN_HOSTS: ${{ secrets.VPS_KNOWN_HOSTS }}
+        run: |
+          if [ -z "$VPS_SSH_KEY" ] || [ -z "$VPS_KNOWN_HOSTS" ]; then
+            echo "::error::VPS_SSH_KEY / VPS_KNOWN_HOSTS secrets are not set (see deploy/vps/README.md)"
+            exit 1
+          fi
+          install -m 700 -d ~/.ssh
+          printf '%s\n' "$VPS_KNOWN_HOSTS" > ~/.ssh/known_hosts
+          printf '%s\n' "$VPS_SSH_KEY" > ~/.ssh/deploy_key
+          chmod 600 ~/.ssh/deploy_key
+
+      - name: Deploy
+        env:
+          VPS_HOST: ${{ secrets.VPS_HOST }}
+        run: ssh -i ~/.ssh/deploy_key -o StrictHostKeyChecking=yes -o BatchMode=yes "root@$VPS_HOST" "$TAG"
+
+      # Wait until the new backend answers (migrations run on startup) and
+      # reports the tag we just deployed.
+      - name: Health check
+        run: |
+          for i in $(seq 1 30); do
+            body=$(curl -fsS --max-time 5 "$VPS_URL/api/health" || true)
+            echo "$body" | grep -q "\"version\":\"$TAG\"" && { echo "healthy: $body"; exit 0; }
+            sleep 5
+          done
+          echo "::error::$VPS_URL/api/health did not report version $TAG (last response: $body)"
+          exit 1
+
+      - name: Remove key
+        if: always()
+        run: rm -f ~/.ssh/deploy_key
