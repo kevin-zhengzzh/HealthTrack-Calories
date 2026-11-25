@@ -10,7 +10,7 @@ It started as my **MSA 2026 Phase 2** project (a gamified check-in and workout t
 |---|---|
 | Web app | https://healthtrack-frontend.icyglacier-3b078f70.australiaeast.azurecontainerapps.io |
 | API (Scalar docs) | https://healthtrack-backend.icyglacier-3b078f70.australiaeast.azurecontainerapps.io/scalar/ |
-| Self-hosted copy | https://kevinzheng.dev |
+| Self-hosted copy | https://healthtrack.kevinzheng.dev |
 
 The first two are on Azure Container Apps, which scales to zero when idle, so the first request after a quiet period takes 20–30 seconds to cold-start. The self-hosted copy runs on a small Linux server (see [Deployment](#deployment)) and has its own accounts and data.
 

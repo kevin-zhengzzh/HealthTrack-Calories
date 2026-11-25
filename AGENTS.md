@@ -67,7 +67,7 @@ Local secrets use `dotnet user-secrets` (`DeepSeek:ApiKey`, `Anthropic:ApiKey`),
 | Azure | resource group `msa-phase2`, environment `managedEnvironment-msaphase2-a491` (shared with Phase 2), Container Apps `healthtrack-backend` / `healthtrack-frontend`, 0–1 replicas |
 | Images | Docker Hub `kevinzheng123/healthtrack-calories` (public), tags `backend-<sha>` / `frontend-<sha>` |
 | Database | Neon project `msa-phase2`, separate database `healthtrack_calories` under the production branch |
-| Self-hosted | https://kevinzheng.dev: DigitalOcean Droplet `healthtrack` (Sydney, 2 GB, `209.38.84.117`, root login by SSH key), code in `/root/HealthTrack-Calories`, config in `deploy/vps/.env` (only on the server); domain and DNS at Cloudflare (D-39) |
+| Self-hosted | https://healthtrack.kevinzheng.dev (the bare domain redirects there with a 302, D-41): DigitalOcean Droplet `healthtrack` (Sydney, 2 GB, `209.38.84.117`, root login by SSH key), code in `/root/HealthTrack-Calories`, config in `deploy/vps/.env` (only on the server); domain and DNS at Cloudflare (D-39) |
 | Backend secrets | `db-connection`, `jwt-key`, `deepseek-api-key`, `healthtrack-prod` (Anthropic key) → env vars `ConnectionStrings__DefaultConnection` / `Jwt__Key` / `DeepSeek__ApiKey` / `Anthropic__ApiKey` |
 | GitHub Secrets | `DOCKERHUB_USERNAME`, `DOCKERHUB_TOKEN`, `AZURE_CREDENTIALS` (service principal, scoped to resource group `msa-phase2`) |
 
@@ -305,6 +305,13 @@ Format: problem → decision → reason → cost/notes.
 - **New endpoint** `GET /api/health`: checks the database connection and returns `{status, version}`, where `version` comes from the `APP_VERSION` environment variable (set to `TAG` in compose; not set on Azure, so null).
 - **Manual**: `./deploy.sh <sha>` on the server rolls back to any deployed version; `TAG=local docker compose up -d --build` builds from source (for testing a branch).
 - **Pitfall**: `deploy.sh` is wrapped in `{ … }` so the shell reads the whole script before running it, because its `git pull` may replace the script itself.
+
+### D-41 The app moves to the subdomain `healthtrack.kevinzheng.dev`; the bare domain is kept for a portfolio (2026-11-26)
+- **Decision**: the Caddyfile serves the app at `healthtrack.{$DOMAIN}`; `kevinzheng.dev` and `www` redirect there with a **302** for now. `DOMAIN` in `.env` stays the bare domain (no change needed); the VPS frontend's API origin and the deploy health check use the subdomain (`compose.yml`, `VPS_URL` in `deploy.yml`). DNS gains an A record `healthtrack` (grey cloud).
+- **Reason**: a portfolio will live at `kevinzheng.dev` (the one address on the CV), with one subdomain per project. Changed before the address spread. 302 rather than 301: a 301 is cached permanently by browsers and search engines, so once the bare domain becomes the portfolio, earlier visitors would still be sent to the old address.
+- **Portfolio**: planned as a static site on Cloudflare Pages / GitHub Pages; the bare domain's DNS will point there, independent of the server.
+- **Deploy**: Caddy only reads the Caddyfile when its container starts, so a separate PR first made `deploy.sh` run `caddy validate` and recreate the Caddy container when the Caddyfile changes (the last applied hash is kept in `.caddyfile-applied`); the subdomain PR, merged after it, is applied by the new script.
+- **Cost**: the browser's sign-in is stored per origin (localStorage), so users sign in once more after the switch.
 
 ### D-14 The deploy workflow can only be triggered manually for now (2026-11-18; automatic deploy restored 2026-11-19)
 - **Decision**: `deploy.yml` keeps only `workflow_dispatch`.

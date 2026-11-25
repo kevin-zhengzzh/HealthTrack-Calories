@@ -28,7 +28,7 @@ env:
   AZURE_RESOURCE_GROUP: msa-phase2
   # API origins baked into each frontend bundle at build time.
   AZURE_API_URL: https://healthtrack-backend.icyglacier-3b078f70.australiaeast.azurecontainerapps.io
-  VPS_URL: https://kevinzheng.dev
+  VPS_URL: https://healthtrack.kevinzheng.dev
 
 jobs:
   build:
